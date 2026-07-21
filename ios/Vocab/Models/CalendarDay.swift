@@ -42,6 +42,25 @@ struct CalendarDay: Equatable, Hashable, Comparable, Sendable {
     }
 }
 
+/// The plain `"yyyy-MM-dd"` wire format shared by every backend this type
+/// touches: Postgres `date` columns (`daily_activity.activity_date`) via
+/// `Codable` below, and the GRDB local mirror's `TEXT` column via
+/// `DatabaseValueConvertible` (see `AppDatabase.swift`) — one format, parsed
+/// and rendered in exactly one place so the two conformances can't drift.
+extension CalendarDay {
+    var isoString: String {
+        String(format: "%04d-%02d-%02d", year, month, day)
+    }
+
+    init?(isoString: String) {
+        let parts = isoString.split(separator: "-")
+        guard parts.count == 3, let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]) else {
+            return nil
+        }
+        self.init(year: year, month: month, day: day)
+    }
+}
+
 /// Wire format for Postgres `date` columns (`daily_activity.activity_date`):
 /// a plain `"yyyy-MM-dd"` string, not the `{year,month,day}` object a
 /// synthesized `Codable` would produce.
@@ -49,21 +68,17 @@ extension CalendarDay: Codable {
     init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer()
         let string = try container.decode(String.self)
-        let parts = string.split(separator: "-")
-        guard parts.count == 3,
-            let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2])
-        else {
+        guard let day = CalendarDay(isoString: string) else {
             throw DecodingError.dataCorruptedError(
                 in: container,
                 debugDescription: "Invalid date format: \(string)"
             )
         }
-        self.init(year: year, month: month, day: day)
+        self = day
     }
 
     func encode(to encoder: any Encoder) throws {
         var container = encoder.singleValueContainer()
-        let string = String(format: "%04d-%02d-%02d", year, month, day)
-        try container.encode(string)
+        try container.encode(isoString)
     }
 }

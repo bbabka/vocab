@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var authStore: AuthStore
+    @EnvironmentObject private var wordStore: WordStore
 
     var body: some View {
         List {
@@ -15,7 +16,17 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 Button("Sign Out", role: .destructive) {
-                    Task { await authStore.signOut() }
+                    Task {
+                        // Opportunistic sync attempt before signing out —
+                        // `authStore.signOut()` refuses (with an error
+                        // message below) if anything's still queued
+                        // afterward, rather than silently discarding it.
+                        await wordStore.drainOutbox()
+                        await authStore.signOut()
+                    }
+                }
+                if let errorMessage = authStore.errorMessage {
+                    Text(errorMessage).foregroundStyle(.red)
                 }
             }
         }
@@ -28,4 +39,5 @@ struct SettingsView: View {
         SettingsView()
     }
     .environmentObject(AuthStore())
+    .environmentObject(WordStore())
 }

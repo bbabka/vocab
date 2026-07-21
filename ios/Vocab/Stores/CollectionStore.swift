@@ -7,18 +7,30 @@ final class CollectionStore: ObservableObject {
     @Published var syncError: String?
 
     private let client: SupabaseClient
+    private let database: AppDatabase
 
-    init(collections: [WordCollection] = MockData.collections, client: SupabaseClient = SupabaseClientProvider.shared) {
+    init(
+        collections: [WordCollection] = MockData.collections,
+        client: SupabaseClient = SupabaseClientProvider.shared,
+        database: AppDatabase = .shared
+    ) {
         self.collections = collections
         self.client = client
+        self.database = database
     }
 
     /// Replaces local state with the signed-in user's rows; RLS scopes the
-    /// fetch automatically.
+    /// fetch automatically. Falls back to the local GRDB mirror when the
+    /// fetch itself fails (offline) — collections have no write outbox (only
+    /// swipes do), so this store's offline story is read-only.
     func loadFromRemote() async {
         do {
             collections = try await CollectionAPI.fetchAll()
+            try? database.replaceCollections(collections)
         } catch {
+            if let cached = try? database.fetchCollections() {
+                collections = cached
+            }
             syncError = error.localizedDescription
         }
     }
@@ -31,6 +43,7 @@ final class CollectionStore: ObservableObject {
         Task {
             do {
                 try await CollectionAPI.insert(collection)
+                try? database.upsertCollection(collection)
             } catch {
                 collections.removeAll { $0.id == collection.id }
                 syncError = error.localizedDescription
@@ -46,6 +59,7 @@ final class CollectionStore: ObservableObject {
         Task {
             do {
                 try await CollectionAPI.update(updated)
+                try? database.upsertCollection(updated)
             } catch {
                 if let currentIndex = collections.firstIndex(where: { $0.id == collectionId }) {
                     collections[currentIndex] = previous
@@ -55,12 +69,29 @@ final class CollectionStore: ObservableObject {
         }
     }
 
+    /// Clears in-memory state on sign-out. Without this, a `@StateObject`
+    /// store (created once for the app's lifetime) would keep showing the
+    /// previous account's collections to a newly signed-in different
+    /// account for the brief window before `loadFromRemote()` completes —
+    /// and would fall back to them again if that fetch failed, since they'd
+    /// still look like valid cached data.
+    func reset() {
+        collections = []
+        syncError = nil
+    }
+
     func delete(_ collectionId: UUID) {
         guard let index = collections.firstIndex(where: { $0.id == collectionId }) else { return }
         let removed = collections.remove(at: index)
         Task {
             do {
                 try await CollectionAPI.delete(collectionId)
+                try? database.deleteCollection(collectionId)
+                // SQLite enforces no cascade between the local mirror
+                // tables — without this, the collection's words would
+                // survive as orphans in `local_words` and could resurface
+                // via WordStore's offline-read fallback.
+                try? database.deleteWords(forCollectionId: collectionId)
             } catch {
                 collections.insert(removed, at: min(index, collections.count))
                 syncError = error.localizedDescription

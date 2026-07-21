@@ -3,13 +3,17 @@ import XCTest
 
 @MainActor
 final class CollectionStoreTests: XCTestCase {
+    private func makeStore(collections: [WordCollection] = MockData.collections) -> CollectionStore {
+        CollectionStore(collections: collections, database: .makeInMemory())
+    }
+
     func testDefaultInitSeedsFromMockData() {
-        let store = CollectionStore()
+        let store = makeStore()
         XCTAssertEqual(store.collections.map(\.id), MockData.collections.map(\.id))
     }
 
     func testAddAppendsCollection() {
-        let store = CollectionStore(collections: [])
+        let store = makeStore(collections: [])
         let collection = WordCollection(name: "French — Food", targetLanguage: "fr", nativeLanguage: "en")
 
         store.add(collection)
@@ -20,7 +24,7 @@ final class CollectionStoreTests: XCTestCase {
     func testRenameUpdatesOnlyTheMatchingCollection() {
         let target = WordCollection(name: "Old Name", targetLanguage: "es", nativeLanguage: "en")
         let other = WordCollection(name: "Unrelated", targetLanguage: "de", nativeLanguage: "en")
-        let store = CollectionStore(collections: [target, other])
+        let store = makeStore(collections: [target, other])
 
         store.rename(target.id, to: "New Name")
 
@@ -31,7 +35,7 @@ final class CollectionStoreTests: XCTestCase {
     func testDeleteRemovesOnlyTheMatchingCollection() {
         let target = WordCollection(name: "To Delete", targetLanguage: "es", nativeLanguage: "en")
         let other = WordCollection(name: "Keep", targetLanguage: "de", nativeLanguage: "en")
-        let store = CollectionStore(collections: [target, other])
+        let store = makeStore(collections: [target, other])
 
         store.delete(target.id)
 

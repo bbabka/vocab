@@ -11,8 +11,12 @@ final class ReviewStoreTests: XCTestCase {
         return ReviewScheduler.Outcome(word: word, log: log, activityDate: activityDate)
     }
 
+    private func makeStore(reviewLog: [ReviewLogEntry] = [], dailyActivity: [DailyActivity] = []) -> ReviewStore {
+        ReviewStore(reviewLog: reviewLog, dailyActivity: dailyActivity, database: .makeInMemory())
+    }
+
     func testRecordAppendsLogEntry() {
-        let store = ReviewStore(reviewLog: [], dailyActivity: [])
+        let store = makeStore()
         let outcome = makeOutcome(activityDate: CalendarDay(date: now))
 
         store.record(outcome)
@@ -21,7 +25,7 @@ final class ReviewStoreTests: XCTestCase {
     }
 
     func testRecordCreatesDailyActivityRowWhenNoneExistsForThatDay() {
-        let store = ReviewStore(reviewLog: [], dailyActivity: [])
+        let store = makeStore()
         let today = CalendarDay(date: now)
 
         store.record(makeOutcome(activityDate: today))
@@ -31,7 +35,7 @@ final class ReviewStoreTests: XCTestCase {
 
     func testRecordIncrementsExistingDailyActivityRowForSameDay() {
         let today = CalendarDay(date: now)
-        let store = ReviewStore(reviewLog: [], dailyActivity: [DailyActivity(activityDate: today, reviewsCount: 4)])
+        let store = makeStore(dailyActivity: [DailyActivity(activityDate: today, reviewsCount: 4)])
 
         store.record(makeOutcome(activityDate: today))
 
@@ -40,8 +44,39 @@ final class ReviewStoreTests: XCTestCase {
 
     func testCurrentStreakDelegatesToStreakCalculator() {
         let today = CalendarDay(date: now)
-        let store = ReviewStore(reviewLog: [], dailyActivity: [DailyActivity(activityDate: today, reviewsCount: 1)])
+        let store = makeStore(dailyActivity: [DailyActivity(activityDate: today, reviewsCount: 1)])
 
         XCTAssertEqual(store.currentStreak(today: today), 1)
+    }
+
+    // MARK: - loadFromRemote reconciliation
+
+    func testDailyActivityReconcileTakesMaxCountForPendingDate() {
+        let today = CalendarDay(date: now)
+        let remote = [DailyActivity(activityDate: today, reviewsCount: 3)]
+        let local = [DailyActivity(activityDate: today, reviewsCount: 5)]
+
+        let reconciled = ReviewStore.reconcile(remote: remote, local: local, pendingDates: [today])
+
+        XCTAssertEqual(reconciled, [DailyActivity(activityDate: today, reviewsCount: 5)])
+    }
+
+    func testDailyActivityReconcilePrefersRemoteWhenDateHasNoPendingReview() {
+        let today = CalendarDay(date: now)
+        let remote = [DailyActivity(activityDate: today, reviewsCount: 3)]
+        let local = [DailyActivity(activityDate: today, reviewsCount: 5)]
+
+        let reconciled = ReviewStore.reconcile(remote: remote, local: local, pendingDates: [])
+
+        XCTAssertEqual(reconciled, [DailyActivity(activityDate: today, reviewsCount: 3)])
+    }
+
+    func testDailyActivityReconcileKeepsLocalOnlyDateWithPendingReview() {
+        let today = CalendarDay(date: now)
+        let local = [DailyActivity(activityDate: today, reviewsCount: 1)]
+
+        let reconciled = ReviewStore.reconcile(remote: [], local: local, pendingDates: [today])
+
+        XCTAssertEqual(reconciled, local)
     }
 }

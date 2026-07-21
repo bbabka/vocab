@@ -15,9 +15,11 @@ final class AuthStore: ObservableObject {
     @Published var errorMessage: String?
 
     private let client: SupabaseClient
+    private let database: AppDatabase
 
-    init(client: SupabaseClient = SupabaseClientProvider.shared) {
+    init(client: SupabaseClient = SupabaseClientProvider.shared, database: AppDatabase = .shared) {
         self.client = client
+        self.database = database
     }
 
     /// Restores any existing session on launch, then keeps `session` in
@@ -52,8 +54,25 @@ final class AuthStore: ObservableObject {
         }
     }
 
+    /// The local GRDB cache isn't scoped by `user_id` — it holds whichever
+    /// account is currently signed in on this device — so it must be wiped
+    /// before a different account can sign in, or the next session would
+    /// read the previous account's cached rows until its own fetch overwrites
+    /// them. `wipe()` also clears the `pending_reviews` outbox, so signing
+    /// out while swipes are still queued would discard them permanently —
+    /// refuse instead. The caller (`SettingsView`) is expected to attempt
+    /// `WordStore.drainOutbox()` first, since that's the tested, existing
+    /// mechanism for syncing the outbox; this just double-checks nothing's
+    /// left before doing anything destructive.
     func signOut() async {
+        errorMessage = nil
+        if let pending = try? database.fetchPendingReviews(), !pending.isEmpty {
+            let noun = pending.count == 1 ? "review" : "reviews"
+            errorMessage = "You have \(pending.count) unsynced \(noun). Connect to the internet and try again once they've synced."
+            return
+        }
         try? await client.auth.signOut()
         session = nil
+        try? database.wipe()
     }
 }

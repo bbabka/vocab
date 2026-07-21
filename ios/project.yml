@@ -17,6 +17,9 @@ packages:
   Supabase:
     url: https://github.com/supabase/supabase-swift
     from: "2.0.0"
+  GRDB:
+    url: https://github.com/groue/GRDB.swift
+    from: "6.29.0"
 
 targets:
   Vocab:
@@ -41,6 +44,8 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations~ipad: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
     dependencies:
       - package: Supabase
+      - package: GRDB
+        product: GRDB
 
   VocabTests:
     type: bundle.unit-test
@@ -50,6 +55,7 @@ targets:
       - path: VocabTests
     dependencies:
       - target: Vocab
+      - package: Supabase
     settings:
       base:
         GENERATE_INFOPLIST_FILE: true

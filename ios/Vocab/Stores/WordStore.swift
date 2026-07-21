@@ -7,19 +7,51 @@ final class WordStore: ObservableObject {
     @Published var syncError: String?
 
     private let client: SupabaseClient
+    private let database: AppDatabase
+    private let reviewSyncing: ReviewSyncing
+    private var isDraining = false
 
-    init(words: [Word] = MockData.words, client: SupabaseClient = SupabaseClientProvider.shared) {
+    init(
+        words: [Word] = MockData.words,
+        client: SupabaseClient = SupabaseClientProvider.shared,
+        database: AppDatabase = .shared,
+        reviewSyncing: ReviewSyncing = SupabaseReviewSyncing()
+    ) {
         self.words = words
         self.client = client
+        self.database = database
+        self.reviewSyncing = reviewSyncing
     }
 
     /// Replaces local state with the signed-in user's rows; RLS scopes the
-    /// fetch automatically.
+    /// fetch automatically. Reconciles against the outbox and the local
+    /// mirror rather than blindly overwriting, then re-mirrors the result —
+    /// this is what a Realtime `postgres_changes` row will also run through
+    /// once Phase 5 wires it up. Falls back to the local mirror when the
+    /// fetch itself fails (offline).
     func loadFromRemote() async {
         do {
-            words = try await WordAPI.fetchAll()
+            let remote = try await WordAPI.fetchAll()
+            let pendingWordIds = Set((try? database.fetchPendingReviews().map(\.wordId)) ?? [])
+            words = Self.reconcile(remote: remote, local: words, pendingWordIds: pendingWordIds)
+            try? database.replaceWords(words)
         } catch {
+            if let cached = try? database.fetchWords() {
+                words = cached
+            }
             syncError = error.localizedDescription
+        }
+    }
+
+    /// Merges a freshly fetched remote row set over local state: if a
+    /// `pending_reviews` entry exists for a word, local optimistic state is
+    /// ahead of the server and wins outright; otherwise it's last-write-wins
+    /// by `updatedAt`, so a local edit that hasn't round-tripped yet doesn't
+    /// get clobbered by a stale-in-flight fetch.
+    static func reconcile(remote: [Word], local: [Word], pendingWordIds: Set<UUID>) -> [Word] {
+        Reconciler.merge(remote: remote, local: local, key: \.id, pendingKeys: pendingWordIds) { local, remote, isPending in
+            if isPending { return local }
+            return local.updatedAt > remote.updatedAt ? local : remote
         }
     }
 
@@ -31,15 +63,27 @@ final class WordStore: ObservableObject {
         words.first { $0.id == id }
     }
 
+    /// Clears in-memory state on sign-out (see `CollectionStore.reset()` for
+    /// why this matters). Does not touch the outbox or local mirror —
+    /// `AuthStore.signOut()` refuses to run at all while `pending_reviews`
+    /// is non-empty, so by the time this is called there's nothing left to
+    /// lose, and `AppDatabase.wipe()` handles clearing the mirror itself.
+    func reset() {
+        words = []
+        syncError = nil
+    }
+
     /// Optimistic add: infrequent, explicit user action, so it rolls back on
     /// a persistence failure rather than trusting local state unconditionally
     /// (unlike a practice swipe, there's no "instant feedback during a fast
-    /// session" pressure here).
+    /// session" pressure here). Adding a word is not covered by the offline
+    /// outbox (that's swipes only) — it still requires connectivity.
     func add(_ word: Word) {
         words.append(word)
         Task {
             do {
                 try await WordAPI.insert(word)
+                try? database.upsertWord(word)
             } catch {
                 words.removeAll { $0.id == word.id }
                 syncError = error.localizedDescription
@@ -64,6 +108,7 @@ final class WordStore: ObservableObject {
         Task {
             do {
                 try await WordAPI.update(current)
+                try? database.upsertWord(current)
             } catch {
                 if let index = words.firstIndex(where: { $0.id == wordId }) {
                     words[index] = previous
@@ -79,6 +124,11 @@ final class WordStore: ObservableObject {
         Task {
             do {
                 try await WordAPI.delete(wordId)
+                try? database.deleteWord(wordId)
+                // A queued review for this word can never apply once it's
+                // gone — drop it rather than let drainOutbox() keep hitting
+                // record_review's "word not found" error on every retry.
+                try? database.deletePendingReviews(forWordId: wordId)
             } catch {
                 words.insert(removed, at: min(index, words.count))
                 syncError = error.localizedDescription
@@ -100,31 +150,81 @@ final class WordStore: ObservableObject {
     }
 
     /// Applies one swipe: runs the pure `ReviewScheduler`, writes the
-    /// resulting word state back into `words` optimistically, and returns
-    /// the outcome so the caller can hand the log/activity-date to
-    /// `ReviewStore`. Deliberately does not touch `ReviewStore` itself —
-    /// stores stay independent, matching Reader's pattern of stores that
-    /// don't reference each other.
+    /// resulting word state back into `words` and the local GRDB mirror
+    /// optimistically, and returns the outcome so the caller can hand the
+    /// log/activity-date to `ReviewStore`. Deliberately does not touch
+    /// `ReviewStore` itself — stores stay independent, matching Reader's
+    /// pattern of stores that don't reference each other.
     ///
-    /// Persists the updated word row in the background afterward,
-    /// fire-and-forget — the brief's success criteria call for swipes to
-    /// "register instantly and sync in the background," and Phase 3 has no
-    /// offline outbox yet to make a failed sync durable/retryable (that's
-    /// Phase 4), so a transient failure here just surfaces via `syncError`
-    /// rather than rolling back a card the user has already swiped past.
+    /// Persistence goes through the outbox, not a direct network call: the
+    /// swipe is queued as a `pending_reviews` row (durable — it survives an
+    /// app kill) and an opportunistic drain is kicked off immediately after.
+    /// If that drain succeeds, the swipe is synced within moments of being
+    /// taken; if it's offline, the row just waits for the next drain trigger
+    /// (launch or reconnect). Either way, the swipe itself never blocks or
+    /// rolls back on a sync failure — matching the brief's "register
+    /// instantly and sync in the background."
     @discardableResult
     func applySwipe(_ swipe: ReviewResult, to wordId: UUID, now: Date = Date()) -> ReviewScheduler.Outcome? {
         guard let word = word(wordId) else { return nil }
         let outcome = ReviewScheduler.apply(swipe, to: word, now: now)
         update(outcome.word)
-        Task {
+        // Explicit do/catch, not `try?`: if the local GRDB write itself
+        // fails (disk full, migration mismatch), the swipe would otherwise
+        // be lost silently — never queued, never synced, no trace anywhere.
+        // Surfacing it via `syncError` is the best we can do for a failure
+        // this deep in the local storage layer.
+        do {
+            try database.upsertWord(outcome.word)
+            try database.enqueuePendingReview(PendingReview(outcome: outcome))
+        } catch {
+            syncError = error.localizedDescription
+        }
+        Task { await drainOutbox() }
+        return outcome
+    }
+
+    /// Replays queued swipes strictly in `clientReviewedAt` order, one at a
+    /// time, awaited sequentially — the same word can recur across multiple
+    /// queued offline swipes, so order matters beyond what the RPC's
+    /// idempotent insert alone protects. Re-fetches the pending list before
+    /// every row (rather than looping over one upfront snapshot) so a swipe
+    /// queued by another call while this drain is mid-flight — which sees
+    /// `isDraining` already `true` and no-ops immediately — still gets
+    /// picked up by this same drain once it reaches that point, instead of
+    /// being stranded until some unrelated later trigger.
+    ///
+    /// A transient failure halts the drain right there (no skip-ahead) and
+    /// leaves the rest queued for the next trigger (app launch or
+    /// reconnect). A *permanent* failure — `record_review`'s "word not
+    /// found" error, meaning the word was deleted before this review synced
+    /// — is different: retrying it can never succeed, so that row is
+    /// dropped and the drain continues past it rather than jamming every
+    /// other queued review behind it forever.
+    ///
+    /// A concurrent call to this method while one is already running is a
+    /// no-op, since the RPC being idempotent doesn't mean it's free to call
+    /// twice.
+    func drainOutbox() async {
+        guard !isDraining else { return }
+        isDraining = true
+        defer { isDraining = false }
+
+        while true {
+            guard let pending = try? database.fetchPendingReviews(), let review = pending.first else { return }
             do {
-                try await WordAPI.update(outcome.word)
+                try await reviewSyncing.recordReview(review)
+                try? database.deletePendingReview(review.id)
             } catch {
+                if PendingReviewAPI.isWordNotFoundError(error) {
+                    try? database.deletePendingReview(review.id)
+                    continue
+                }
+                try? database.markPendingReviewFailed(review.id, error: error.localizedDescription)
                 syncError = error.localizedDescription
+                return
             }
         }
-        return outcome
     }
 
     /// Manual override from Word Detail: force a status, resetting the
@@ -153,6 +253,7 @@ final class WordStore: ObservableObject {
         Task {
             do {
                 try await WordAPI.update(word)
+                try? database.upsertWord(word)
             } catch {
                 update(previous)
                 syncError = error.localizedDescription
