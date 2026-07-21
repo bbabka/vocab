@@ -1,0 +1,6 @@
+Vocab.xcodeproj/
+Generated/
+build/
+DerivedData/
+*.xcuserstate
+.DS_Store
