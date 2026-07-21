@@ -4,8 +4,16 @@ struct WordDetailView: View {
     let wordId: UUID
 
     @EnvironmentObject private var wordStore: WordStore
+    @EnvironmentObject private var collectionStore: CollectionStore
     @State private var draft: Word?
     @State private var original: Word?
+    @State private var isFetchingExample = false
+    @State private var exampleFetchFailed = false
+
+    private var collection: WordCollection? {
+        guard let draft else { return nil }
+        return collectionStore.collections.first { $0.id == draft.collectionId }
+    }
 
     var body: some View {
         Group {
@@ -53,9 +61,21 @@ struct WordDetailView: View {
             Section("Example") {
                 TextField("Example sentence", text: optionalText(wordBinding.exampleSentence), axis: .vertical)
                 Button {
-                    // Tatoeba fetch wired in Phase 6.
+                    Task { await fetchExample() }
                 } label: {
-                    Label("Fetch example", systemImage: "text.book.closed")
+                    if isFetchingExample {
+                        ProgressView()
+                    } else {
+                        Label("Fetch example", systemImage: "text.book.closed")
+                    }
+                }
+                .disabled(isFetchingExample)
+                if exampleFetchFailed {
+                    // Best-effort, undocumented endpoint (see brief) — a
+                    // non-blocking, dismissible-by-retry note, never an alert.
+                    Text("Couldn't fetch an example — try again or enter one manually.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -78,7 +98,8 @@ struct WordDetailView: View {
 
             Section {
                 Button {
-                    // AVSpeechSynthesizer wired in Phase 6.
+                    guard let draft else { return }
+                    SpeechService.shared.speak(draft.term, languageCode: collection?.targetLanguage ?? "en")
                 } label: {
                     Label("Speak term", systemImage: "speaker.wave.2")
                 }
@@ -92,6 +113,24 @@ struct WordDetailView: View {
             set: { binding.wrappedValue = $0.isEmpty ? nil : $0 }
         )
     }
+
+    private func fetchExample() async {
+        guard let draft, let collection else { return }
+        isFetchingExample = true
+        defer { isFetchingExample = false }
+
+        if let example = await TatoebaService.fetchExample(
+            term: draft.term,
+            languageCode: collection.targetLanguage,
+            nativeLanguageCode: collection.nativeLanguage
+        ) {
+            self.draft?.exampleSentence = example
+            wordStore.update(self.draft!)
+            exampleFetchFailed = false
+        } else {
+            exampleFetchFailed = true
+        }
+    }
 }
 
 #Preview {
@@ -99,4 +138,5 @@ struct WordDetailView: View {
         WordDetailView(wordId: MockData.words[0].id)
     }
     .environmentObject(WordStore())
+    .environmentObject(CollectionStore())
 }

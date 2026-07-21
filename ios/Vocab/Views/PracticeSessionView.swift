@@ -12,6 +12,7 @@ struct PracticeSessionView: View {
 
     @EnvironmentObject private var wordStore: WordStore
     @EnvironmentObject private var reviewStore: ReviewStore
+    @EnvironmentObject private var collectionStore: CollectionStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var batch: [Word] = []
@@ -76,7 +77,7 @@ struct PracticeSessionView: View {
                 // stacked-deck effect. Never flipped (it isn't current yet)
                 // and ignores hit-testing so it can't steal the gesture.
                 if let nextWord {
-                    FlashcardView(word: nextWord, isFlipped: false)
+                    FlashcardView(word: nextWord, isFlipped: false, onSpeak: {})
                         .padding(.horizontal, 24)
                         .scaleEffect(0.94 + 0.06 * dragProgress)
                         .opacity(dragProgress)
@@ -87,7 +88,7 @@ struct PracticeSessionView: View {
                 // modal presentation, keep the draggable hit region away
                 // from the edges so it never overlaps an edge-originated
                 // system gesture.
-                FlashcardView(word: word, isFlipped: isFlipped)
+                FlashcardView(word: word, isFlipped: isFlipped, onSpeak: { speak(word) })
                     .padding(.horizontal, 24)
                     .offset(dragOffset)
                     .rotationEffect(.degrees(Double(dragOffset.width / 20)))
@@ -117,6 +118,11 @@ struct PracticeSessionView: View {
                     withAnimation(.spring) { dragOffset = .zero }
                 }
             }
+    }
+
+    private func speak(_ word: Word) {
+        let languageCode = collectionStore.collections.first { $0.id == word.collectionId }?.targetLanguage ?? "en"
+        SpeechService.shared.speak(word.term, languageCode: languageCode)
     }
 
     private func resolveSwipe(_ translation: CGSize) -> ReviewResult? {
@@ -199,6 +205,7 @@ struct SessionTally {
 private struct FlashcardView: View {
     let word: Word
     let isFlipped: Bool
+    let onSpeak: () -> Void
 
     var body: some View {
         VStack(spacing: 12) {
@@ -222,6 +229,16 @@ private struct FlashcardView: View {
         .padding(32)
         .frame(maxWidth: .infinity, minHeight: 260)
         .background(RoundedRectangle(cornerRadius: 20).fill(.background).shadow(radius: 6))
+        .overlay(alignment: .topTrailing) {
+            // A plain-style `Button` intercepts its own tap, so this never
+            // also triggers the card's flip `onTapGesture` underneath it.
+            Button(action: onSpeak) {
+                Image(systemName: "speaker.wave.2.fill")
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+            }
+            .buttonStyle(.plain)
+        }
     }
 }
 
@@ -229,4 +246,5 @@ private struct FlashcardView: View {
     PracticeSessionView(collectionId: nil, batchSize: 10)
         .environmentObject(WordStore())
         .environmentObject(ReviewStore())
+        .environmentObject(CollectionStore())
 }

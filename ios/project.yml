@@ -1,8 +1,11 @@
 name: Vocab
 options:
   bundleIdPrefix: com.jakubsvehla
+  # Raised from 17.0 in Phase 6: `LanguageAvailability` needs iOS 17.4+, but
+  # `TranslationSession.Configuration` (used to drive `.translationTask`)
+  # needs iOS 18.0+ — confirmed at build time per the brief's own caveat.
   deploymentTarget:
-    iOS: "17.0"
+    iOS: "18.0"
   createIntermediateGroups: true
 
 settings:
@@ -25,7 +28,7 @@ targets:
   Vocab:
     type: application
     platform: iOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "18.0"
     sources:
       - path: Vocab
     info:
@@ -50,7 +53,7 @@ targets:
   VocabTests:
     type: bundle.unit-test
     platform: iOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "18.0"
     sources:
       - path: VocabTests
     dependencies:
