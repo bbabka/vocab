@@ -1,0 +1,11 @@
+import Foundation
+
+// Copy this file to SupabaseConfig.swift and fill in your project's URL and
+// key (Project Settings > API). The anon/publishable key is safe to ship in
+// the client per the brief — it's meaningless without RLS-enforced auth —
+// but this file still stays gitignored so switching between local/dev/prod
+// Supabase projects doesn't touch version control.
+enum SupabaseConfig {
+    static let url = URL(string: "https://YOUR_PROJECT_REF.supabase.co")!
+    static let anonKey = "YOUR_ANON_OR_PUBLISHABLE_KEY"
+}

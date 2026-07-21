@@ -4,8 +4,22 @@ struct RootView: View {
     @EnvironmentObject private var collectionStore: CollectionStore
     @EnvironmentObject private var wordStore: WordStore
     @EnvironmentObject private var reviewStore: ReviewStore
+    @EnvironmentObject private var authStore: AuthStore
 
     var body: some View {
+        Group {
+            if authStore.session != nil {
+                mainTabs
+            } else {
+                AuthView()
+            }
+        }
+        .task {
+            await authStore.observeAuthState()
+        }
+    }
+
+    private var mainTabs: some View {
         TabView {
             NavigationStack {
                 CollectionsListView()
@@ -44,4 +58,5 @@ struct RootView: View {
         .environmentObject(CollectionStore())
         .environmentObject(WordStore())
         .environmentObject(ReviewStore())
+        .environmentObject(AuthStore())
 }
