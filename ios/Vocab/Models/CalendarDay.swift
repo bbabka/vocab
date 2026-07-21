@@ -5,7 +5,7 @@ import Foundation
 /// instants across a timezone/DST boundary instead of comparing calendar
 /// days; this type makes that class of bug structurally impossible since
 /// there's no instant to compare, only y/m/d.
-struct CalendarDay: Codable, Equatable, Hashable, Comparable, Sendable {
+struct CalendarDay: Equatable, Hashable, Comparable, Sendable {
     var year: Int
     var month: Int
     var day: Int
@@ -39,5 +39,31 @@ struct CalendarDay: Codable, Equatable, Hashable, Comparable, Sendable {
         let date = calendar.date(from: components) ?? Date()
         let shifted = calendar.date(byAdding: .day, value: days, to: date) ?? date
         return CalendarDay(date: shifted, calendar: calendar)
+    }
+}
+
+/// Wire format for Postgres `date` columns (`daily_activity.activity_date`):
+/// a plain `"yyyy-MM-dd"` string, not the `{year,month,day}` object a
+/// synthesized `Codable` would produce.
+extension CalendarDay: Codable {
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let string = try container.decode(String.self)
+        let parts = string.split(separator: "-")
+        guard parts.count == 3,
+            let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2])
+        else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Invalid date format: \(string)"
+            )
+        }
+        self.init(year: year, month: month, day: day)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        let string = String(format: "%04d-%02d-%02d", year, month, day)
+        try container.encode(string)
     }
 }

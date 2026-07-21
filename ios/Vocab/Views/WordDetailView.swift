@@ -5,6 +5,7 @@ struct WordDetailView: View {
 
     @EnvironmentObject private var wordStore: WordStore
     @State private var draft: Word?
+    @State private var original: Word?
 
     var body: some View {
         Group {
@@ -16,7 +17,15 @@ struct WordDetailView: View {
         }
         .navigationTitle("Word")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { draft = wordStore.word(wordId) }
+        .onAppear {
+            let word = wordStore.word(wordId)
+            draft = word
+            original = word
+        }
+        .onDisappear {
+            guard let original else { return }
+            wordStore.persist(wordId, previous: original)
+        }
     }
 
     /// Only ever constructed while `draft` is known non-nil (see `body`), so
