@@ -4,7 +4,6 @@ struct CollectionsListView: View {
     @EnvironmentObject private var collectionStore: CollectionStore
     @EnvironmentObject private var wordStore: WordStore
     @State private var isPresentingNewCollection = false
-    @State private var newCollectionName = ""
 
     var body: some View {
         List {
@@ -32,16 +31,8 @@ struct CollectionsListView: View {
                 }
             }
         }
-        .alert("New Collection", isPresented: $isPresentingNewCollection) {
-            TextField("Name", text: $newCollectionName)
-            Button("Cancel", role: .cancel) { newCollectionName = "" }
-            Button("Create") {
-                guard !newCollectionName.isEmpty else { return }
-                collectionStore.add(
-                    WordCollection(name: newCollectionName, targetLanguage: "es", nativeLanguage: "en")
-                )
-                newCollectionName = ""
-            }
+        .sheet(isPresented: $isPresentingNewCollection) {
+            AddCollectionView()
         }
     }
 }
