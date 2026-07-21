@@ -86,6 +86,50 @@ final class ReviewStore: ObservableObject {
         syncError = nil
     }
 
+    /// Applies one incoming `postgres_changes` row for `daily_activity`.
+    /// `daily_activity` rows are only ever inserted/upserted by the app (via
+    /// `record_review`'s `on conflict ... do update`), never deleted, so a
+    /// delete event is ignored rather than acted on.
+    func applyRealtimeChange(_ change: AnyAction) {
+        switch change {
+        case .insert(let insert):
+            applyIncomingActivity(insert)
+        case .update(let update):
+            applyIncomingActivity(update)
+        case .delete:
+            break
+        }
+    }
+
+    private func applyIncomingActivity(_ action: some HasRecord) {
+        guard let remote = try? action.decodeRecord(as: DailyActivity.self, decoder: SupabaseClientProvider.payloadDecoder) else { return }
+        let pendingDates = Set((try? database.fetchPendingReviews().map(\.activityDate)) ?? [])
+        dailyActivity = Self.applyingRealtimeUpsert(remote, into: dailyActivity, pendingDates: pendingDates)
+        if let resolved = dailyActivity.first(where: { $0.activityDate == remote.activityDate }) {
+            try? database.upsertDailyActivity(resolved)
+        }
+    }
+
+    /// Same pending-day-wins-max rule as `reconcile`, but as an upsert into
+    /// the existing array rather than a wholesale replace (see
+    /// `WordStore.applyingRealtimeUpsert` for why `Reconciler.merge` isn't
+    /// reusable as-is for a single incoming row).
+    static func applyingRealtimeUpsert(_ remote: DailyActivity, into activity: [DailyActivity], pendingDates: Set<CalendarDay>) -> [DailyActivity] {
+        let resolved: DailyActivity
+        if pendingDates.contains(remote.activityDate),
+           let local = activity.first(where: { $0.activityDate == remote.activityDate }) {
+            resolved = DailyActivity(activityDate: remote.activityDate, reviewsCount: max(remote.reviewsCount, local.reviewsCount))
+        } else {
+            resolved = remote
+        }
+        guard let index = activity.firstIndex(where: { $0.activityDate == resolved.activityDate }) else {
+            return activity + [resolved]
+        }
+        var updated = activity
+        updated[index] = resolved
+        return updated
+    }
+
     func record(_ outcome: ReviewScheduler.Outcome) {
         reviewLog.append(outcome.log)
 

@@ -139,6 +139,57 @@ final class WordStoreTests: XCTestCase {
 
         XCTAssertEqual(reconciled.first?.term, "local edit")
     }
+
+    // MARK: - applyRealtimeChange (single-row upsert/delete)
+
+    func testRealtimeUpsertSkipsWhenAPendingReviewExistsForThatWord() {
+        let word = makeWord()
+
+        let result = WordStore.applyingRealtimeUpsert(word, into: [word], pendingWordIds: [word.id])
+
+        XCTAssertNil(result, "local outbox state is ahead; the incoming row must not overwrite it")
+    }
+
+    func testRealtimeUpsertSkipsAStaleOutOfOrderRow() {
+        var local = makeWord()
+        local.updatedAt = Date(timeIntervalSince1970: 2_000)
+        var staleRemote = local
+        staleRemote.term = "older write"
+        staleRemote.updatedAt = Date(timeIntervalSince1970: 1_000)
+
+        let result = WordStore.applyingRealtimeUpsert(staleRemote, into: [local], pendingWordIds: [])
+
+        XCTAssertNil(result)
+    }
+
+    func testRealtimeUpsertAppliesANewerRow() {
+        var local = makeWord()
+        local.updatedAt = Date(timeIntervalSince1970: 1_000)
+        var remote = local
+        remote.term = "updated elsewhere"
+        remote.updatedAt = Date(timeIntervalSince1970: 2_000)
+
+        let result = WordStore.applyingRealtimeUpsert(remote, into: [local], pendingWordIds: [])
+
+        XCTAssertEqual(result?.first?.term, "updated elsewhere")
+    }
+
+    func testRealtimeUpsertAppendsAWordNotYetKnownLocally() {
+        let remote = makeWord()
+
+        let result = WordStore.applyingRealtimeUpsert(remote, into: [], pendingWordIds: [])
+
+        XCTAssertEqual(result, [remote])
+    }
+
+    func testRealtimeDeleteRemovesOnlyTheMatchingWord() {
+        let target = makeWord()
+        let other = makeWord()
+
+        let result = WordStore.applyingRealtimeDelete(target.id, from: [target, other])
+
+        XCTAssertEqual(result, [other])
+    }
 }
 
 /// Always fails — used to prove a swipe is durably queued before any

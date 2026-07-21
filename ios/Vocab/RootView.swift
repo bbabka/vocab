@@ -6,6 +6,8 @@ struct RootView: View {
     @EnvironmentObject private var reviewStore: ReviewStore
     @EnvironmentObject private var authStore: AuthStore
     @StateObject private var connectivityMonitor = ConnectivityMonitor()
+    @StateObject private var realtimeService = RealtimeService()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
@@ -29,6 +31,23 @@ struct RootView: View {
                 collectionStore.reset()
                 wordStore.reset()
                 reviewStore.reset()
+                Task { await realtimeService.stop() }
+            }
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            // Tears the subscription down in the background rather than
+            // just pausing consumption, so a backgrounded app doesn't hold
+            // an idle socket open; `.inactive` (transient, e.g. control
+            // center or the app switcher) is deliberately ignored to avoid
+            // churning the channel on every brief foreground flicker.
+            guard authStore.session != nil else { return }
+            switch newPhase {
+            case .active:
+                realtimeService.start(collectionStore: collectionStore, wordStore: wordStore, reviewStore: reviewStore)
+            case .background:
+                Task { await realtimeService.stop() }
+            default:
+                break
             }
         }
     }
@@ -67,6 +86,11 @@ struct RootView: View {
             // Outbox drain trigger #1 (launch); trigger #2 is reconnect,
             // wired below via `connectivityMonitor.start`.
             await drainAndRefreshActivity()
+
+            // Initial subscribe on first appearance after sign-in; the
+            // scenePhase handler above takes over for subsequent
+            // background/foreground transitions during this same session.
+            realtimeService.start(collectionStore: collectionStore, wordStore: wordStore, reviewStore: reviewStore)
         }
         .task {
             connectivityMonitor.start {

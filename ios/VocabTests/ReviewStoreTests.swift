@@ -79,4 +79,35 @@ final class ReviewStoreTests: XCTestCase {
 
         XCTAssertEqual(reconciled, local)
     }
+
+    // MARK: - applyRealtimeChange (single-row upsert)
+
+    func testRealtimeUpsertTakesMaxCountForPendingDate() {
+        let today = CalendarDay(date: now)
+        let local = [DailyActivity(activityDate: today, reviewsCount: 5)]
+        let remote = DailyActivity(activityDate: today, reviewsCount: 3)
+
+        let result = ReviewStore.applyingRealtimeUpsert(remote, into: local, pendingDates: [today])
+
+        XCTAssertEqual(result, [DailyActivity(activityDate: today, reviewsCount: 5)])
+    }
+
+    func testRealtimeUpsertPrefersRemoteWhenDateHasNoPendingReview() {
+        let today = CalendarDay(date: now)
+        let local = [DailyActivity(activityDate: today, reviewsCount: 5)]
+        let remote = DailyActivity(activityDate: today, reviewsCount: 3)
+
+        let result = ReviewStore.applyingRealtimeUpsert(remote, into: local, pendingDates: [])
+
+        XCTAssertEqual(result, [DailyActivity(activityDate: today, reviewsCount: 3)])
+    }
+
+    func testRealtimeUpsertAppendsADayNotYetKnownLocally() {
+        let today = CalendarDay(date: now)
+        let remote = DailyActivity(activityDate: today, reviewsCount: 2)
+
+        let result = ReviewStore.applyingRealtimeUpsert(remote, into: [], pendingDates: [])
+
+        XCTAssertEqual(result, [remote])
+    }
 }

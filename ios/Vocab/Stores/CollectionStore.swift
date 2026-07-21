@@ -51,6 +51,49 @@ final class CollectionStore: ObservableObject {
         }
     }
 
+    /// Applies one incoming `postgres_changes` row for `collections`.
+    /// Unlike `WordStore`, there's no outbox and no `updatedAt` on
+    /// `WordCollection` to arbitrate a conflict — collections' only local
+    /// writes are `add`/`rename`/`delete`, which are optimistic-then-
+    /// confirmed-online, so by the time a Realtime row for this id arrives,
+    /// it reflects the current committed server state and can simply be
+    /// applied wholesale.
+    func applyRealtimeChange(_ change: AnyAction) {
+        switch change {
+        case .insert(let insert):
+            applyIncomingCollection(insert)
+        case .update(let update):
+            applyIncomingCollection(update)
+        case .delete(let delete):
+            guard let id = delete.oldRecord["id"]?.stringValue.flatMap(UUID.init(uuidString:)) else { return }
+            collections = Self.applyingRealtimeDelete(id, from: collections)
+            try? database.deleteCollection(id)
+            // Mirrors `delete(_:)`: SQLite doesn't cascade between the local
+            // mirror tables, so a collection deleted on another device would
+            // otherwise leave its words as orphans in `local_words`.
+            try? database.deleteWords(forCollectionId: id)
+        }
+    }
+
+    private func applyIncomingCollection(_ action: some HasRecord) {
+        guard let remote = try? action.decodeRecord(as: WordCollection.self, decoder: SupabaseClientProvider.payloadDecoder) else { return }
+        collections = Self.applyingRealtimeUpsert(remote, into: collections)
+        try? database.upsertCollection(remote)
+    }
+
+    static func applyingRealtimeUpsert(_ remote: WordCollection, into collections: [WordCollection]) -> [WordCollection] {
+        guard let index = collections.firstIndex(where: { $0.id == remote.id }) else {
+            return collections + [remote]
+        }
+        var updated = collections
+        updated[index] = remote
+        return updated
+    }
+
+    static func applyingRealtimeDelete(_ id: UUID, from collections: [WordCollection]) -> [WordCollection] {
+        collections.filter { $0.id != id }
+    }
+
     func rename(_ collectionId: UUID, to name: String) {
         guard let index = collections.firstIndex(where: { $0.id == collectionId }) else { return }
         let previous = collections[index]

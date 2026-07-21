@@ -55,6 +55,59 @@ final class WordStore: ObservableObject {
         }
     }
 
+    /// Applies one incoming `postgres_changes` row for `words`. Decodes with
+    /// the same rules PostgREST responses use, then defers to the pure
+    /// `applyingRealtimeUpsert`/`applyingRealtimeDelete` below for the actual
+    /// merge decision — kept separate from this method (which also touches
+    /// the GRDB mirror) so the merge logic itself stays unit-testable
+    /// without needing to construct a real `AnyAction` (the SDK's action
+    /// types have no public initializer).
+    func applyRealtimeChange(_ change: AnyAction) {
+        let pendingWordIds = Set((try? database.fetchPendingReviews().map(\.wordId)) ?? [])
+        switch change {
+        case .insert(let insert):
+            applyIncomingWord(insert, pendingWordIds: pendingWordIds)
+        case .update(let update):
+            applyIncomingWord(update, pendingWordIds: pendingWordIds)
+        case .delete(let delete):
+            guard let id = delete.oldRecord["id"]?.stringValue.flatMap(UUID.init(uuidString:)) else { return }
+            words = Self.applyingRealtimeDelete(id, from: words)
+            try? database.deleteWord(id)
+            // Mirrors `delete(_:)`: a queued review for a word deleted on
+            // another device can never apply once it syncs.
+            try? database.deletePendingReviews(forWordId: id)
+        }
+    }
+
+    private func applyIncomingWord(_ action: some HasRecord, pendingWordIds: Set<UUID>) {
+        guard let remote = try? action.decodeRecord(as: Word.self, decoder: SupabaseClientProvider.payloadDecoder) else { return }
+        guard let updated = Self.applyingRealtimeUpsert(remote, into: words, pendingWordIds: pendingWordIds) else { return }
+        words = updated
+        try? database.upsertWord(remote)
+    }
+
+    /// Same pending/last-write-wins rules as `reconcile`, but as an upsert
+    /// into the existing array rather than a wholesale replace — a single
+    /// incoming row must not drop every other word not present in this one
+    /// remote row, which is what `Reconciler.merge` would do if handed a
+    /// one-element `remote` array. Returns `nil` when the incoming row
+    /// shouldn't change local state (pending outbox entry, or a stale/
+    /// out-of-order row older than what's already there).
+    static func applyingRealtimeUpsert(_ remote: Word, into words: [Word], pendingWordIds: Set<UUID>) -> [Word]? {
+        guard !pendingWordIds.contains(remote.id) else { return nil }
+        guard let index = words.firstIndex(where: { $0.id == remote.id }) else {
+            return words + [remote]
+        }
+        guard remote.updatedAt >= words[index].updatedAt else { return nil }
+        var updated = words
+        updated[index] = remote
+        return updated
+    }
+
+    static func applyingRealtimeDelete(_ id: UUID, from words: [Word]) -> [Word] {
+        words.filter { $0.id != id }
+    }
+
     func words(in collectionId: UUID) -> [Word] {
         words.filter { $0.collectionId == collectionId }
     }

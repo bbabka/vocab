@@ -41,4 +41,33 @@ final class CollectionStoreTests: XCTestCase {
 
         XCTAssertEqual(store.collections, [other])
     }
+
+    // MARK: - applyRealtimeChange (single-row upsert/delete)
+
+    func testRealtimeUpsertAppliesAnUpdateToAnExistingCollection() {
+        let existing = WordCollection(name: "Old Name", targetLanguage: "es", nativeLanguage: "en")
+        var renamed = existing
+        renamed.name = "New Name"
+
+        let result = CollectionStore.applyingRealtimeUpsert(renamed, into: [existing])
+
+        XCTAssertEqual(result, [renamed])
+    }
+
+    func testRealtimeUpsertAppendsACollectionNotYetKnownLocally() {
+        let remote = WordCollection(name: "New", targetLanguage: "de", nativeLanguage: "en")
+
+        let result = CollectionStore.applyingRealtimeUpsert(remote, into: [])
+
+        XCTAssertEqual(result, [remote])
+    }
+
+    func testRealtimeDeleteRemovesOnlyTheMatchingCollection() {
+        let target = WordCollection(name: "To Delete", targetLanguage: "es", nativeLanguage: "en")
+        let other = WordCollection(name: "Keep", targetLanguage: "de", nativeLanguage: "en")
+
+        let result = CollectionStore.applyingRealtimeDelete(target.id, from: [target, other])
+
+        XCTAssertEqual(result, [other])
+    }
 }

@@ -23,6 +23,12 @@ enum SupabaseClientProvider {
         return encoder
     }
 
+    /// Exposed for `RealtimeService` to decode `postgres_changes` row
+    /// payloads with the same snake_case/ISO8601 rules PostgREST responses
+    /// already use, so a live update and a fetched snapshot decode
+    /// identically.
+    static var payloadDecoder: JSONDecoder { postgrestDecoder }
+
     private static var postgrestDecoder: JSONDecoder {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
