@@ -26,6 +26,24 @@ struct PracticeSessionView: View {
         return batch[currentIndex]
     }
 
+    private var nextWord: Word? {
+        let nextIndex = currentIndex + 1
+        guard nextIndex < batch.count else { return nil }
+        return batch[nextIndex]
+    }
+
+    /// How far into the current drag/fly-off we are, 0...1. Drives the next
+    /// card's fade/scale-in underneath — reusing `dragOffset` directly means
+    /// it stays in sync automatically through both the live drag and the
+    /// fly-off animation (SwiftUI interpolates `dragOffset`, so this
+    /// recomputes on every frame of both), and snaps back to 0 for free when
+    /// `finishCommit` resets `dragOffset` with animations disabled.
+    private var dragProgress: CGFloat {
+        let maxDistance: CGFloat = 150
+        let magnitude = max(abs(dragOffset.width), abs(dragOffset.height))
+        return min(magnitude / maxDistance, 1.0)
+    }
+
     var body: some View {
         NavigationStack {
             Group {
@@ -53,15 +71,29 @@ struct PracticeSessionView: View {
         VStack {
             Spacer()
 
-            // Inset horizontally from the screen edges: even under a modal
-            // presentation, keep the draggable hit region away from the
-            // edges so it never overlaps an edge-originated system gesture.
-            FlashcardView(word: word, isFlipped: isFlipped)
-                .padding(.horizontal, 24)
-                .offset(dragOffset)
-                .rotationEffect(.degrees(Double(dragOffset.width / 20)))
-                .gesture(dragGesture(for: word))
-                .onTapGesture { isFlipped.toggle() }
+            ZStack {
+                // Revealed underneath as the current card is dragged away —
+                // stacked-deck effect. Never flipped (it isn't current yet)
+                // and ignores hit-testing so it can't steal the gesture.
+                if let nextWord {
+                    FlashcardView(word: nextWord, isFlipped: false)
+                        .padding(.horizontal, 24)
+                        .scaleEffect(0.94 + 0.06 * dragProgress)
+                        .opacity(dragProgress)
+                        .allowsHitTesting(false)
+                }
+
+                // Inset horizontally from the screen edges: even under a
+                // modal presentation, keep the draggable hit region away
+                // from the edges so it never overlaps an edge-originated
+                // system gesture.
+                FlashcardView(word: word, isFlipped: isFlipped)
+                    .padding(.horizontal, 24)
+                    .offset(dragOffset)
+                    .rotationEffect(.degrees(Double(dragOffset.width / 20)))
+                    .gesture(dragGesture(for: word))
+                    .onTapGesture { isFlipped.toggle() }
+            }
 
             Spacer()
 
@@ -80,7 +112,7 @@ struct PracticeSessionView: View {
             .onEnded { value in
                 let swipe = resolveSwipe(value.translation)
                 if let swipe {
-                    commit(swipe, for: word)
+                    flingOffScreen(swipe, for: word)
                 } else {
                     withAnimation(.spring) { dragOffset = .zero }
                 }
@@ -98,13 +130,47 @@ struct PracticeSessionView: View {
         return nil
     }
 
-    private func commit(_ swipe: ReviewResult, for word: Word) {
+    /// Distance is deliberately larger than any device's screen dimension so
+    /// the card is fully clear of the visible bounds by the time the fly-off
+    /// animation finishes, regardless of device size.
+    private func flyOffTarget(for swipe: ReviewResult) -> CGSize {
+        let distance: CGFloat = 1200
+        switch swipe {
+        case .know: return CGSize(width: distance, height: 0)
+        case .dontKnow: return CGSize(width: -distance, height: 0)
+        case .skip: return CGSize(width: 0, height: distance)
+        }
+    }
+
+    /// Animates the current card fully off-screen — Tinder-style, no
+    /// bounce-back — while it still shows the *outgoing* word (`currentIndex`
+    /// doesn't change yet). Only once that animation finishes does
+    /// `finishCommit` advance to the next word, and it does so with
+    /// animations disabled: the previous bug had the index advance in the
+    /// same animated block as the offset reset, so the still-mid-flight card
+    /// would already be showing the *next* word's text — the new text and
+    /// the departing card visually clashed. Separating "animate out" from
+    /// "swap content, then snap in" fixes that.
+    private func flingOffScreen(_ swipe: ReviewResult, for word: Word) {
+        withAnimation(.easeOut(duration: 0.3)) {
+            dragOffset = flyOffTarget(for: swipe)
+        } completion: {
+            finishCommit(swipe, for: word)
+        }
+    }
+
+    private func finishCommit(_ swipe: ReviewResult, for word: Word) {
         if let outcome = wordStore.applySwipe(swipe, to: word.id) {
             reviewStore.record(outcome)
         }
         tally.record(swipe)
 
-        withAnimation(.spring) {
+        // No animation here on purpose: the next card should simply be
+        // there at center already showing its own text, not visibly slide
+        // in from off-screen after the previous one just left.
+        var noAnimation = Transaction()
+        noAnimation.disablesAnimations = true
+        withTransaction(noAnimation) {
             dragOffset = .zero
             isFlipped = false
             currentIndex += 1
