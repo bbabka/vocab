@@ -2,10 +2,9 @@ import SwiftUI
 
 /// Presented via `fullScreenCover` (not pushed onto a `NavigationStack`)
 /// specifically so there is no edge-swipe-to-dismiss gesture competing with
-/// the card's own left/right swipes — the brief's flagged real gesture risk
-/// is the horizontal edge-swipe-back vs. a horizontal card swipe, not the
-/// downward skip swipe, and presenting modally sidesteps it entirely rather
-/// than needing to fight `interactivePopGesture` mid-session.
+/// the card's own left/right swipes — presenting modally sidesteps the
+/// horizontal edge-swipe-back vs. horizontal card swipe conflict entirely
+/// rather than needing to fight `interactivePopGesture` mid-session.
 struct PracticeSessionView: View {
     let collectionId: UUID?
     let batchSize: Int
@@ -34,15 +33,23 @@ struct PracticeSessionView: View {
     }
 
     /// How far into the current drag/fly-off we are, 0...1. Drives the next
-    /// card's fade/scale-in underneath — reusing `dragOffset` directly means
-    /// it stays in sync automatically through both the live drag and the
-    /// fly-off animation (SwiftUI interpolates `dragOffset`, so this
-    /// recomputes on every frame of both), and snaps back to 0 for free when
-    /// `finishCommit` resets `dragOffset` with animations disabled.
+    /// card's fade/scale-in underneath and the background tint's color/
+    /// intensity — one signed value for both, since `dragOffset` is
+    /// horizontal-only (skip is a button, not a drag direction, so there's
+    /// no vertical component to account for separately). Reusing
+    /// `dragOffset` directly means it stays in sync automatically through
+    /// both the live drag and the fly-off animation (SwiftUI interpolates
+    /// `dragOffset`, so this recomputes on every frame of both), and snaps
+    /// back to 0 for free when `finishCommit` resets `dragOffset` with
+    /// animations disabled. Range -1...1: positive for a rightward ("know")
+    /// drag, negative for leftward ("don't know").
     private var dragProgress: CGFloat {
         let maxDistance: CGFloat = 150
-        let magnitude = max(abs(dragOffset.width), abs(dragOffset.height))
-        return min(magnitude / maxDistance, 1.0)
+        return max(min(dragOffset.width / maxDistance, 1.0), -1.0)
+    }
+
+    private var swipeTintColor: Color {
+        dragProgress >= 0 ? .green : .red
     }
 
     var body: some View {
@@ -79,8 +86,8 @@ struct PracticeSessionView: View {
                 if let nextWord {
                     FlashcardView(word: nextWord, isFlipped: false, onSpeak: {})
                         .padding(.horizontal, 24)
-                        .scaleEffect(0.94 + 0.06 * dragProgress)
-                        .opacity(dragProgress)
+                        .scaleEffect(0.94 + 0.06 * abs(dragProgress))
+                        .opacity(abs(dragProgress))
                         .allowsHitTesting(false)
                 }
 
@@ -103,15 +110,44 @@ struct PracticeSessionView: View {
                 .foregroundStyle(.secondary)
                 .padding(.bottom)
         }
+        .background(
+            swipeTintColor
+                .opacity(Double(abs(dragProgress)) * 0.6)
+                .ignoresSafeArea()
+        )
+        .overlay(alignment: .bottomTrailing) {
+            skipButton(for: word)
+        }
+    }
+
+    /// Explicit tap target for skip, replacing the old downward-drag
+    /// gesture — keeps `dragOffset` purely horizontal so the background
+    /// tint and `resolveSwipe`'s classification read from the same value
+    /// and can never disagree.
+    private func skipButton(for word: Word) -> some View {
+        Button {
+            flingOffScreen(.skip, for: word)
+        } label: {
+            Label("Skip", systemImage: "arrow.uturn.right")
+                .labelStyle(.iconOnly)
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .padding(14)
+                .background(.thinMaterial, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .padding(20)
     }
 
     private func dragGesture(for word: Word) -> some Gesture {
         DragGesture(minimumDistance: 20)
             .onChanged { value in
-                dragOffset = value.translation
+                // Horizontal-only: skip is now a button, not a drag
+                // direction, so vertical motion shouldn't move the card.
+                dragOffset = CGSize(width: value.translation.width, height: 0)
             }
             .onEnded { value in
-                let swipe = resolveSwipe(value.translation)
+                let swipe = resolveSwipe(value.translation.width)
                 if let swipe {
                     flingOffScreen(swipe, for: word)
                 } else {
@@ -125,15 +161,10 @@ struct PracticeSessionView: View {
         SpeechService.shared.speak(word.term, languageCode: languageCode)
     }
 
-    private func resolveSwipe(_ translation: CGSize) -> ReviewResult? {
+    private func resolveSwipe(_ horizontalTranslation: CGFloat) -> ReviewResult? {
         let threshold: CGFloat = 80
-        if abs(translation.width) > abs(translation.height), abs(translation.width) > threshold {
-            return translation.width > 0 ? .know : .dontKnow
-        }
-        if translation.height > threshold, abs(translation.height) > abs(translation.width) {
-            return .skip
-        }
-        return nil
+        guard abs(horizontalTranslation) > threshold else { return nil }
+        return horizontalTranslation > 0 ? .know : .dontKnow
     }
 
     /// Distance is deliberately larger than any device's screen dimension so
