@@ -67,6 +67,15 @@ struct AddWordView: View {
 
                 Section("Example") {
                     TextField("Example sentence", text: $exampleSentence, axis: .vertical)
+                    if let collection {
+                        ExampleFetchButton(
+                            term: term,
+                            languageCode: collection.targetLanguage,
+                            nativeLanguageCode: collection.nativeLanguage
+                        ) { example in
+                            exampleSentence = example
+                        }
+                    }
                 }
 
                 Section("Importance") {

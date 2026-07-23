@@ -11,7 +11,9 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if authStore.session != nil {
+            if authStore.isInitializing {
+                SplashView()
+            } else if authStore.session != nil {
                 mainTabs
             } else {
                 AuthView()

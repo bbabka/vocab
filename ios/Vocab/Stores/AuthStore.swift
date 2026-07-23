@@ -10,6 +10,13 @@ import Supabase
 @MainActor
 final class AuthStore: ObservableObject {
     @Published private(set) var session: Session?
+    /// True until the first `authStateChanges` event lands — Supabase's
+    /// initial event reports whatever session it restored from the
+    /// Keychain, so `session` is only meaningful once this flips to false.
+    /// Without this, `RootView` would show `AuthView` (since `session`
+    /// starts `nil`) and then flash over to the tabs for anyone already
+    /// signed in.
+    @Published private(set) var isInitializing = true
     @Published var isSendingCode = false
     @Published var isVerifying = false
     @Published var errorMessage: String?
@@ -28,6 +35,7 @@ final class AuthStore: ObservableObject {
     func observeAuthState() async {
         for await state in client.auth.authStateChanges {
             session = state.session
+            isInitializing = false
         }
     }
 
