@@ -34,15 +34,45 @@ struct StatsView: View {
             }
 
             Section("Activity") {
-                ForEach(reviewStore.dailyActivity.sorted(by: { $0.activityDate > $1.activityDate }), id: \.activityDate) { activity in
-                    LabeledContent(
-                        "\(activity.activityDate.year)-\(activity.activityDate.month)-\(activity.activityDate.day)",
-                        value: "\(activity.reviewsCount) reviews"
-                    )
-                }
+                HeatmapView(
+                    grid: HeatmapBuilder.grid(activity: reviewStore.dailyActivity, weeks: 12, today: CalendarDay(date: Date()))
+                )
+                .listRowInsets(EdgeInsets())
+                .padding(.horizontal)
+                .padding(.vertical, 8)
             }
         }
         .navigationTitle("Stats")
+    }
+}
+
+private struct HeatmapView: View {
+    let grid: [[HeatmapCell?]]
+
+    private func color(for count: Int) -> Color {
+        switch count {
+        case 0: .secondary.opacity(0.12)
+        case 1...2: .accentColor.opacity(0.35)
+        case 3...5: .accentColor.opacity(0.6)
+        case 6...9: .accentColor.opacity(0.85)
+        default: .accentColor
+        }
+    }
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: 3) {
+                ForEach(grid.indices, id: \.self) { column in
+                    VStack(spacing: 3) {
+                        ForEach(0..<7, id: \.self) { row in
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(grid[column][row].map { color(for: $0.reviewsCount) } ?? Color.clear)
+                                .frame(width: 12, height: 12)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
