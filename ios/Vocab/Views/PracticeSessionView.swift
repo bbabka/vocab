@@ -33,28 +33,23 @@ struct PracticeSessionView: View {
     }
 
     /// How far into the current drag/fly-off we are, 0...1. Drives the next
-    /// card's fade/scale-in underneath — reusing `dragOffset` directly means
-    /// it stays in sync automatically through both the live drag and the
-    /// fly-off animation (SwiftUI interpolates `dragOffset`, so this
-    /// recomputes on every frame of both), and snaps back to 0 for free when
-    /// `finishCommit` resets `dragOffset` with animations disabled.
+    /// card's fade/scale-in underneath and the background tint's color/
+    /// intensity — one signed value for both, since `dragOffset` is
+    /// horizontal-only (skip is a button, not a drag direction, so there's
+    /// no vertical component to account for separately). Reusing
+    /// `dragOffset` directly means it stays in sync automatically through
+    /// both the live drag and the fly-off animation (SwiftUI interpolates
+    /// `dragOffset`, so this recomputes on every frame of both), and snaps
+    /// back to 0 for free when `finishCommit` resets `dragOffset` with
+    /// animations disabled. Range -1...1: positive for a rightward ("know")
+    /// drag, negative for leftward ("don't know").
     private var dragProgress: CGFloat {
-        let maxDistance: CGFloat = 150
-        let magnitude = max(abs(dragOffset.width), abs(dragOffset.height))
-        return min(magnitude / maxDistance, 1.0)
-    }
-
-    /// Signed, horizontal-only counterpart to `dragProgress`: -1...1, positive
-    /// for a rightward ("know") drag, negative for leftward ("don't know").
-    /// Drives the background color fade, so it deliberately ignores vertical
-    /// motion — a downward skip shouldn't tint the screen red or green.
-    private var horizontalDragProgress: CGFloat {
         let maxDistance: CGFloat = 150
         return max(min(dragOffset.width / maxDistance, 1.0), -1.0)
     }
 
     private var swipeTintColor: Color {
-        horizontalDragProgress >= 0 ? .green : .red
+        dragProgress >= 0 ? .green : .red
     }
 
     var body: some View {
@@ -91,8 +86,8 @@ struct PracticeSessionView: View {
                 if let nextWord {
                     FlashcardView(word: nextWord, isFlipped: false, onSpeak: {})
                         .padding(.horizontal, 24)
-                        .scaleEffect(0.94 + 0.06 * dragProgress)
-                        .opacity(dragProgress)
+                        .scaleEffect(0.94 + 0.06 * abs(dragProgress))
+                        .opacity(abs(dragProgress))
                         .allowsHitTesting(false)
                 }
 
@@ -117,7 +112,7 @@ struct PracticeSessionView: View {
         }
         .background(
             swipeTintColor
-                .opacity(Double(abs(horizontalDragProgress)) * 0.6)
+                .opacity(Double(abs(dragProgress)) * 0.6)
                 .ignoresSafeArea()
         )
         .overlay(alignment: .bottomTrailing) {
@@ -125,6 +120,10 @@ struct PracticeSessionView: View {
         }
     }
 
+    /// Explicit tap target for skip, replacing the old downward-drag
+    /// gesture — keeps `dragOffset` purely horizontal so the background
+    /// tint and `resolveSwipe`'s classification read from the same value
+    /// and can never disagree.
     private func skipButton(for word: Word) -> some View {
         Button {
             flingOffScreen(.skip, for: word)
