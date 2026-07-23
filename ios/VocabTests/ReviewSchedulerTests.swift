@@ -36,6 +36,13 @@ final class ReviewSchedulerTests: XCTestCase {
         )
     }
 
+    func testPartOfSpeechRawValuesMatchDatabaseCheckConstraint() {
+        XCTAssertEqual(
+            PartOfSpeech.allCases.map(\.rawValue),
+            ["noun", "verb", "adjective", "adverb", "pronoun", "preposition", "conjunction", "interjection", "other"]
+        )
+    }
+
     // MARK: - Phase 1: active deck (new/learning)
 
     func testNewWordKnowSwipeIncrementsKnowCountWithoutGraduating() {

@@ -210,7 +210,17 @@ private struct FlashcardView: View {
     var body: some View {
         VStack(spacing: 12) {
             if isFlipped {
-                Text(word.translation).font(.title2)
+                ForEach(word.meanings) { meaning in
+                    HStack(spacing: 6) {
+                        if !meaning.partOfSpeech.abbreviation.isEmpty {
+                            Text(meaning.partOfSpeech.abbreviation)
+                                .foregroundStyle(.secondary)
+                                .italic()
+                        }
+                        Text(meaning.translation)
+                    }
+                    .font(.title2)
+                }
                 if let exampleSentence = word.exampleSentence {
                     Text(exampleSentence)
                         .font(.body)

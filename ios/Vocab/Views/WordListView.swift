@@ -34,7 +34,7 @@ struct WordListView: View {
         if !searchText.isEmpty {
             result = result.filter {
                 $0.term.localizedCaseInsensitiveContains(searchText)
-                    || $0.translation.localizedCaseInsensitiveContains(searchText)
+                    || $0.meanings.contains { $0.translation.localizedCaseInsensitiveContains(searchText) }
             }
         }
         return result
@@ -84,11 +84,19 @@ struct WordListView: View {
 private struct WordRow: View {
     let word: Word
 
+    private var meaningsSummary: String {
+        word.meanings
+            .map { $0.partOfSpeech.abbreviation.isEmpty ? $0.translation : "\($0.partOfSpeech.abbreviation) \($0.translation)" }
+            .joined(separator: " · ")
+    }
+
     var body: some View {
         HStack {
             VStack(alignment: .leading) {
                 Text(word.term).font(.body)
-                Text(word.translation).font(.subheadline).foregroundStyle(.secondary)
+                if !word.meanings.isEmpty {
+                    Text(meaningsSummary).font(.subheadline).foregroundStyle(.secondary)
+                }
             }
             Spacer()
             StatusBadge(status: word.status)

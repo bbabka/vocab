@@ -102,6 +102,35 @@ final class AppDatabase: Sendable {
             }
         }
 
+        // `local_words` is a disposable read mirror (Postgres stays the
+        // source of truth, and `loadFromRemote()` already falls back to
+        // fetching remote on any local read failure) — drop-and-recreate
+        // rather than an in-place `ALTER TABLE` is safe here and sidesteps
+        // SQLite version differences around dropping columns.
+        migrator.registerMigration("v2_word_meanings") { db in
+            try db.drop(table: "local_words")
+            try db.create(table: "local_words") { t in
+                t.column("id", .blob).primaryKey()
+                t.column("collectionId", .blob).notNull().indexed()
+                t.column("term", .text).notNull()
+                // Stores `[WordMeaning]` — GRDB's Codable-derived record
+                // conformance JSON-encodes properties that aren't natively
+                // representable database values, so no custom column
+                // handling is needed beyond declaring it `.text`.
+                t.column("meanings", .text).notNull()
+                t.column("pronunciation", .text)
+                t.column("exampleSentence", .text)
+                t.column("status", .text).notNull()
+                t.column("importance", .integer).notNull()
+                t.column("knowCount", .integer).notNull()
+                t.column("intervalStep", .integer).notNull()
+                t.column("dueAt", .datetime)
+                t.column("timesSeen", .integer).notNull()
+                t.column("createdAt", .datetime).notNull()
+                t.column("updatedAt", .datetime).notNull()
+            }
+        }
+
         return migrator
     }()
 }

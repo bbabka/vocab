@@ -18,7 +18,14 @@ final class AppDatabaseTests: XCTestCase {
         let word = Word(
             collectionId: UUID(),
             term: "Wort",
-            translation: "word",
+            // Multiple meanings, each with its own part of speech — this is
+            // the actual new surface here: GRDB's Codable-derived record
+            // conformance must JSON-round-trip the whole array, not just a
+            // single scalar column.
+            meanings: [
+                WordMeaning(translation: "word", partOfSpeech: .noun),
+                WordMeaning(translation: "to word (something)", partOfSpeech: .verb),
+            ],
             pronunciation: "vɔʁt",
             exampleSentence: "Ein Wort.",
             status: .learnt,

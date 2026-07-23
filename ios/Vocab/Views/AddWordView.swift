@@ -13,7 +13,7 @@ struct AddWordView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var term = ""
-    @State private var translation = ""
+    @State private var meanings: [WordMeaning] = [WordMeaning(translation: "")]
     @State private var exampleSentence = ""
     @State private var importance = 2
 
@@ -29,14 +29,34 @@ struct AddWordView: View {
             Form {
                 Section("Term") {
                     TextField("Term", text: $term)
-                    // Auto-suggested by the Translation framework, debounced
-                    // off `term` below; always editable and never blocks
-                    // saving, even mid-translation or on a failure.
-                    HStack {
-                        TextField("Translation", text: $translation)
-                        if translationState == .translating {
-                            ProgressView()
+                }
+
+                Section("Meanings") {
+                    // The first row is auto-suggested by the Translation
+                    // framework, debounced off `term` below; always editable
+                    // and never blocks saving, even mid-translation or on a
+                    // failure. Additional rows are entirely manual — Apple's
+                    // Translation API returns one plain translation, not a
+                    // dictionary of senses.
+                    ForEach($meanings, editActions: .delete) { $meaning in
+                        HStack {
+                            Picker("Part of speech", selection: $meaning.partOfSpeech) {
+                                ForEach(PartOfSpeech.allCases, id: \.self) { pos in
+                                    Text(pos.abbreviation.isEmpty ? "—" : pos.abbreviation).tag(pos)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(width: 80)
+                            TextField("Meaning", text: $meaning.translation)
+                            if meaning.id == meanings.first?.id, translationState == .translating {
+                                ProgressView()
+                            }
                         }
+                    }
+                    Button {
+                        meanings.append(WordMeaning(translation: ""))
+                    } label: {
+                        Label("Add meaning", systemImage: "plus")
                     }
                     if case .unsupported(let source, let target) = translationState {
                         Text("Auto-translate isn't available for \(source) → \(target) — enter manually.")
@@ -64,7 +84,7 @@ struct AddWordView: View {
                             Word(
                                 collectionId: collectionId,
                                 term: term,
-                                translation: translation,
+                                meanings: meanings.filter { !$0.translation.isEmpty },
                                 exampleSentence: exampleSentence.isEmpty ? nil : exampleSentence,
                                 importance: importance
                             )
@@ -103,11 +123,11 @@ struct AddWordView: View {
             }
         }
         .translationTask(configuration) { session in
-            guard !term.isEmpty else { return }
+            guard !term.isEmpty, !meanings.isEmpty else { return }
             translationState = .translating
             do {
                 let response = try await session.translate(term)
-                translation = response.targetText
+                meanings[0].translation = response.targetText
                 translationState = .idle
             } catch {
                 // Transient failure: leave the field as-is, silently, per

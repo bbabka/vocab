@@ -54,8 +54,27 @@ struct WordDetailView: View {
         Form {
             Section("Term") {
                 TextField("Term", text: wordBinding.term)
-                TextField("Translation", text: wordBinding.translation)
                 TextField("Pronunciation", text: optionalText(wordBinding.pronunciation))
+            }
+
+            Section("Meanings") {
+                ForEach(wordBinding.meanings, editActions: .delete) { $meaning in
+                    HStack {
+                        Picker("Part of speech", selection: $meaning.partOfSpeech) {
+                            ForEach(PartOfSpeech.allCases, id: \.self) { pos in
+                                Text(pos.abbreviation.isEmpty ? "—" : pos.abbreviation).tag(pos)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 80)
+                        TextField("Meaning", text: $meaning.translation)
+                    }
+                }
+                Button {
+                    wordBinding.wrappedValue.meanings.append(WordMeaning(translation: ""))
+                } label: {
+                    Label("Add meaning", systemImage: "plus")
+                }
             }
 
             Section("Example") {
