@@ -43,6 +43,11 @@ struct StatsView: View {
             }
         }
         .navigationTitle("Stats")
+        .refreshable {
+            async let words: () = wordStore.loadFromRemote()
+            async let reviews: () = reviewStore.loadFromRemote()
+            _ = await (words, reviews)
+        }
     }
 }
 
