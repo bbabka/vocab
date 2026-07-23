@@ -16,6 +16,8 @@ struct AddWordView: View {
     @State private var meanings: [WordMeaning] = [WordMeaning(translation: "")]
     @State private var exampleSentence = ""
     @State private var importance = 2
+    @State private var isFetchingExample = false
+    @State private var exampleFetchFailed = false
 
     @State private var translationState: TranslationFieldState = .checking
     @State private var configuration: TranslationSession.Configuration?
@@ -67,6 +69,23 @@ struct AddWordView: View {
 
                 Section("Example") {
                     TextField("Example sentence", text: $exampleSentence, axis: .vertical)
+                    Button {
+                        Task { await fetchExample() }
+                    } label: {
+                        if isFetchingExample {
+                            ProgressView()
+                        } else {
+                            Label("Fetch example", systemImage: "text.book.closed")
+                        }
+                    }
+                    .disabled(isFetchingExample || term.isEmpty)
+                    if exampleFetchFailed {
+                        // Best-effort, undocumented endpoint (see brief) — a
+                        // non-blocking, dismissible-by-retry note, never an alert.
+                        Text("Couldn't fetch an example — try again or enter one manually.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Section("Importance") {
@@ -134,6 +153,23 @@ struct AddWordView: View {
                 // the brief — this is a suggestion, not a dependency.
                 translationState = .idle
             }
+        }
+    }
+
+    private func fetchExample() async {
+        guard let collection, !term.isEmpty else { return }
+        isFetchingExample = true
+        defer { isFetchingExample = false }
+
+        if let example = await TatoebaService.fetchExample(
+            term: term,
+            languageCode: collection.targetLanguage,
+            nativeLanguageCode: collection.nativeLanguage
+        ) {
+            exampleSentence = example
+            exampleFetchFailed = false
+        } else {
+            exampleFetchFailed = true
         }
     }
 }
