@@ -19,6 +19,11 @@ struct CollectionsListView: View {
             }
         }
         .navigationTitle("Collections")
+        .refreshable {
+            async let collections: () = collectionStore.loadFromRemote()
+            async let words: () = wordStore.loadFromRemote()
+            _ = await (collections, words)
+        }
         .navigationDestination(for: CollectionRoute.self) { route in
             WordListView(collectionId: route.id)
         }

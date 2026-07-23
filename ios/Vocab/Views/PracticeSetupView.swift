@@ -35,6 +35,9 @@ struct PracticeSetupView: View {
             }
         }
         .navigationTitle("Practice")
+        .refreshable {
+            await collectionStore.loadFromRemote()
+        }
         .fullScreenCover(isPresented: $isPresentingSession) {
             PracticeSessionView(collectionId: selectedCollectionId, batchSize: batchSize)
         }
