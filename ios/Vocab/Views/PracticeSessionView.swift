@@ -2,10 +2,9 @@ import SwiftUI
 
 /// Presented via `fullScreenCover` (not pushed onto a `NavigationStack`)
 /// specifically so there is no edge-swipe-to-dismiss gesture competing with
-/// the card's own left/right swipes — the brief's flagged real gesture risk
-/// is the horizontal edge-swipe-back vs. a horizontal card swipe, not the
-/// downward skip swipe, and presenting modally sidesteps it entirely rather
-/// than needing to fight `interactivePopGesture` mid-session.
+/// the card's own left/right swipes — presenting modally sidesteps the
+/// horizontal edge-swipe-back vs. horizontal card swipe conflict entirely
+/// rather than needing to fight `interactivePopGesture` mid-session.
 struct PracticeSessionView: View {
     let collectionId: UUID?
     let batchSize: Int
@@ -121,15 +120,35 @@ struct PracticeSessionView: View {
                 .opacity(Double(abs(horizontalDragProgress)) * 0.6)
                 .ignoresSafeArea()
         )
+        .overlay(alignment: .bottomTrailing) {
+            skipButton(for: word)
+        }
+    }
+
+    private func skipButton(for word: Word) -> some View {
+        Button {
+            flingOffScreen(.skip, for: word)
+        } label: {
+            Label("Skip", systemImage: "arrow.uturn.right")
+                .labelStyle(.iconOnly)
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .padding(14)
+                .background(.thinMaterial, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .padding(20)
     }
 
     private func dragGesture(for word: Word) -> some Gesture {
         DragGesture(minimumDistance: 20)
             .onChanged { value in
-                dragOffset = value.translation
+                // Horizontal-only: skip is now a button, not a drag
+                // direction, so vertical motion shouldn't move the card.
+                dragOffset = CGSize(width: value.translation.width, height: 0)
             }
             .onEnded { value in
-                let swipe = resolveSwipe(value.translation)
+                let swipe = resolveSwipe(value.translation.width)
                 if let swipe {
                     flingOffScreen(swipe, for: word)
                 } else {
@@ -143,15 +162,10 @@ struct PracticeSessionView: View {
         SpeechService.shared.speak(word.term, languageCode: languageCode)
     }
 
-    private func resolveSwipe(_ translation: CGSize) -> ReviewResult? {
+    private func resolveSwipe(_ horizontalTranslation: CGFloat) -> ReviewResult? {
         let threshold: CGFloat = 80
-        if abs(translation.width) > abs(translation.height), abs(translation.width) > threshold {
-            return translation.width > 0 ? .know : .dontKnow
-        }
-        if translation.height > threshold, abs(translation.height) > abs(translation.width) {
-            return .skip
-        }
-        return nil
+        guard abs(horizontalTranslation) > threshold else { return nil }
+        return horizontalTranslation > 0 ? .know : .dontKnow
     }
 
     /// Distance is deliberately larger than any device's screen dimension so
