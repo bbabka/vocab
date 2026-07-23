@@ -45,6 +45,19 @@ struct PracticeSessionView: View {
         return min(magnitude / maxDistance, 1.0)
     }
 
+    /// Signed, horizontal-only counterpart to `dragProgress`: -1...1, positive
+    /// for a rightward ("know") drag, negative for leftward ("don't know").
+    /// Drives the background color fade, so it deliberately ignores vertical
+    /// motion — a downward skip shouldn't tint the screen red or green.
+    private var horizontalDragProgress: CGFloat {
+        let maxDistance: CGFloat = 150
+        return max(min(dragOffset.width / maxDistance, 1.0), -1.0)
+    }
+
+    private var swipeTintColor: Color {
+        horizontalDragProgress >= 0 ? .green : .red
+    }
+
     var body: some View {
         NavigationStack {
             Group {
@@ -103,6 +116,11 @@ struct PracticeSessionView: View {
                 .foregroundStyle(.secondary)
                 .padding(.bottom)
         }
+        .background(
+            swipeTintColor
+                .opacity(Double(abs(horizontalDragProgress)) * 0.6)
+                .ignoresSafeArea()
+        )
     }
 
     private func dragGesture(for word: Word) -> some Gesture {
