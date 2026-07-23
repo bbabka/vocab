@@ -7,8 +7,6 @@ struct WordDetailView: View {
     @EnvironmentObject private var collectionStore: CollectionStore
     @State private var draft: Word?
     @State private var original: Word?
-    @State private var isFetchingExample = false
-    @State private var exampleFetchFailed = false
 
     private var collection: WordCollection? {
         guard let draft else { return nil }
@@ -79,22 +77,15 @@ struct WordDetailView: View {
 
             Section("Example") {
                 TextField("Example sentence", text: optionalText(wordBinding.exampleSentence), axis: .vertical)
-                Button {
-                    Task { await fetchExample() }
-                } label: {
-                    if isFetchingExample {
-                        ProgressView()
-                    } else {
-                        Label("Fetch example", systemImage: "text.book.closed")
+                if let draft, let collection {
+                    ExampleFetchButton(
+                        term: draft.term,
+                        languageCode: collection.targetLanguage,
+                        nativeLanguageCode: collection.nativeLanguage
+                    ) { example in
+                        self.draft?.exampleSentence = example
+                        wordStore.update(self.draft!)
                     }
-                }
-                .disabled(isFetchingExample)
-                if exampleFetchFailed {
-                    // Best-effort, undocumented endpoint (see brief) — a
-                    // non-blocking, dismissible-by-retry note, never an alert.
-                    Text("Couldn't fetch an example — try again or enter one manually.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -131,24 +122,6 @@ struct WordDetailView: View {
             get: { binding.wrappedValue ?? "" },
             set: { binding.wrappedValue = $0.isEmpty ? nil : $0 }
         )
-    }
-
-    private func fetchExample() async {
-        guard let draft, let collection else { return }
-        isFetchingExample = true
-        defer { isFetchingExample = false }
-
-        if let example = await TatoebaService.fetchExample(
-            term: draft.term,
-            languageCode: collection.targetLanguage,
-            nativeLanguageCode: collection.nativeLanguage
-        ) {
-            self.draft?.exampleSentence = example
-            wordStore.update(self.draft!)
-            exampleFetchFailed = false
-        } else {
-            exampleFetchFailed = true
-        }
     }
 }
 
