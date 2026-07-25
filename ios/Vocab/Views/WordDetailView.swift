@@ -7,6 +7,7 @@ struct WordDetailView: View {
     @EnvironmentObject private var collectionStore: CollectionStore
     @State private var draft: Word?
     @State private var original: Word?
+    @State private var isEditing = false
 
     private var collection: WordCollection? {
         guard let draft else { return nil }
@@ -15,14 +16,27 @@ struct WordDetailView: View {
 
     var body: some View {
         Group {
-            if draft != nil {
-                form
+            if let draft {
+                if isEditing {
+                    editForm
+                } else {
+                    detail(for: draft)
+                }
             } else {
                 ContentUnavailableView("Word not found", systemImage: "questionmark")
             }
         }
         .navigationTitle("Word")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if draft != nil {
+                ToolbarItem(placement: .primaryAction) {
+                    Button(isEditing ? "Done" : "Edit") {
+                        isEditing.toggle()
+                    }
+                }
+            }
+        }
         .onAppear {
             let word = wordStore.word(wordId)
             draft = word
@@ -33,6 +47,107 @@ struct WordDetailView: View {
             wordStore.persist(wordId, previous: original)
         }
     }
+
+    // MARK: - Detail
+
+    @ViewBuilder
+    private func detail(for word: Word) -> some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                wordCard(word)
+                statsCard(word)
+            }
+            .padding()
+        }
+    }
+
+    private func wordCard(_ word: Word) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(word.term)
+                        .font(.largeTitle.bold())
+                    if let pronunciation = word.pronunciation, !pronunciation.isEmpty {
+                        Text(pronunciation)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                StatusBadge(status: word.status)
+            }
+
+            if !word.meanings.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(word.meanings) { meaning in
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            if !meaning.partOfSpeech.abbreviation.isEmpty {
+                                Text(meaning.partOfSpeech.abbreviation)
+                                    .font(.subheadline)
+                                    .italic()
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(meaning.translation)
+                                .font(.title3)
+                        }
+                    }
+                }
+            }
+
+            if let example = word.exampleSentence, !example.isEmpty {
+                Divider()
+                Text(example)
+                    .font(.body)
+                    .italic()
+                    .foregroundStyle(.secondary)
+            }
+
+            Button {
+                SpeechService.shared.speak(word.term, languageCode: collection?.targetLanguage ?? "en")
+            } label: {
+                Label("Speak", systemImage: "speaker.wave.2.fill")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func statsCard(_ word: Word) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Stats")
+                .font(.headline)
+                .padding(.bottom, 8)
+
+            statRow("Status", value: word.status.rawValue.capitalized)
+            Divider()
+            statRow("Importance", value: String(repeating: "★", count: word.importance))
+            Divider()
+            statRow("Times seen", value: "\(word.timesSeen)")
+            Divider()
+            statRow("Know count", value: "\(word.knowCount)")
+            if let dueAt = word.dueAt {
+                Divider()
+                statRow("Next check-in", value: dueAt.formatted(date: .abbreviated, time: .omitted))
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func statRow(_ label: String, value: String) -> some View {
+        HStack {
+            Text(label).foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+        }
+        .padding(.vertical, 6)
+    }
+
+    // MARK: - Editing
 
     /// Only ever constructed while `draft` is known non-nil (see `body`), so
     /// the force-unwrap in `wordBinding` is safe: `draft` is set once on
@@ -48,7 +163,7 @@ struct WordDetailView: View {
     }
 
     @ViewBuilder
-    private var form: some View {
+    private var editForm: some View {
         Form {
             Section("Term") {
                 TextField("Term", text: wordBinding.term)
@@ -95,23 +210,6 @@ struct WordDetailView: View {
                     ForEach(WordStatus.allCases, id: \.self) { status in
                         Text(status.rawValue.capitalized).tag(status)
                     }
-                }
-            }
-
-            Section("History") {
-                LabeledContent("Times seen", value: "\(wordBinding.wrappedValue.timesSeen)")
-                LabeledContent("Know count", value: "\(wordBinding.wrappedValue.knowCount)")
-                if let dueAt = wordBinding.wrappedValue.dueAt {
-                    LabeledContent("Next check-in", value: dueAt.formatted(date: .abbreviated, time: .omitted))
-                }
-            }
-
-            Section {
-                Button {
-                    guard let draft else { return }
-                    SpeechService.shared.speak(draft.term, languageCode: collection?.targetLanguage ?? "en")
-                } label: {
-                    Label("Speak term", systemImage: "speaker.wave.2")
                 }
             }
         }

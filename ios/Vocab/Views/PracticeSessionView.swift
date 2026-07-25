@@ -6,7 +6,7 @@ import SwiftUI
 /// horizontal edge-swipe-back vs. horizontal card swipe conflict entirely
 /// rather than needing to fight `interactivePopGesture` mid-session.
 struct PracticeSessionView: View {
-    let collectionId: UUID?
+    let collectionIds: Set<UUID>?
     let batchSize: Int
 
     @EnvironmentObject private var wordStore: WordStore
@@ -70,7 +70,7 @@ struct PracticeSessionView: View {
             }
         }
         .onAppear {
-            batch = wordStore.assembleBatch(collectionId: collectionId, batchSize: batchSize)
+            batch = wordStore.assembleBatch(collectionIds: collectionIds, batchSize: batchSize)
         }
     }
 
@@ -284,7 +284,7 @@ private struct FlashcardView: View {
 }
 
 #Preview {
-    PracticeSessionView(collectionId: nil, batchSize: 10)
+    PracticeSessionView(collectionIds: nil, batchSize: 10)
         .environmentObject(WordStore())
         .environmentObject(ReviewStore())
         .environmentObject(CollectionStore())
