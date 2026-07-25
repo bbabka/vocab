@@ -4,12 +4,31 @@ struct CollectionsListView: View {
     @EnvironmentObject private var collectionStore: CollectionStore
     @EnvironmentObject private var wordStore: WordStore
     @State private var isPresentingNewCollection = false
+    @State private var renamingCollection: WordCollection?
+    @State private var renameText = ""
 
     var body: some View {
         List {
             ForEach(collectionStore.collections) { collection in
                 NavigationLink(value: CollectionRoute(id: collection.id)) {
                     CollectionRow(collection: collection, words: wordStore.words(in: collection.id))
+                }
+                .swipeActions(edge: .leading) {
+                    Button {
+                        renamingCollection = collection
+                        renameText = collection.name
+                    } label: {
+                        Label("Rename", systemImage: "pencil")
+                    }
+                    .tint(.blue)
+                }
+                .contextMenu {
+                    Button {
+                        renamingCollection = collection
+                        renameText = collection.name
+                    } label: {
+                        Label("Rename", systemImage: "pencil")
+                    }
                 }
             }
             .onDelete { offsets in
@@ -38,6 +57,19 @@ struct CollectionsListView: View {
         }
         .sheet(isPresented: $isPresentingNewCollection) {
             AddCollectionView()
+        }
+        .alert("Rename Collection", isPresented: Binding(
+            get: { renamingCollection != nil },
+            set: { isPresented in if !isPresented { renamingCollection = nil } }
+        )) {
+            TextField("Name", text: $renameText)
+            Button("Cancel", role: .cancel) { renamingCollection = nil }
+            Button("Save") {
+                if let renamingCollection, !renameText.isEmpty {
+                    collectionStore.rename(renamingCollection.id, to: renameText)
+                }
+                renamingCollection = nil
+            }
         }
     }
 }
