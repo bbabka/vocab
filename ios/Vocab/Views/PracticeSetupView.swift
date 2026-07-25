@@ -2,7 +2,7 @@ import SwiftUI
 
 struct PracticeSetupView: View {
     @EnvironmentObject private var collectionStore: CollectionStore
-    @State private var selectedCollectionId: UUID?
+    @State private var selectedCollectionIds: Set<UUID> = []
     @State private var batchSize = 20
     @State private var isPresentingSession = false
 
@@ -10,13 +10,44 @@ struct PracticeSetupView: View {
 
     var body: some View {
         Form {
-            Section("Collection") {
-                Picker("Collection", selection: $selectedCollectionId) {
-                    Text("All").tag(UUID?.none)
-                    ForEach(collectionStore.collections) { collection in
-                        Text(collection.name).tag(Optional(collection.id))
+            Section {
+                Button {
+                    selectedCollectionIds = []
+                } label: {
+                    HStack {
+                        Text("All")
+                        Spacer()
+                        if selectedCollectionIds.isEmpty {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(Color.accentColor)
+                        }
                     }
                 }
+                .foregroundStyle(.primary)
+
+                ForEach(collectionStore.collections) { collection in
+                    Button {
+                        if selectedCollectionIds.contains(collection.id) {
+                            selectedCollectionIds.remove(collection.id)
+                        } else {
+                            selectedCollectionIds.insert(collection.id)
+                        }
+                    } label: {
+                        HStack {
+                            Text(collection.name)
+                            Spacer()
+                            if selectedCollectionIds.contains(collection.id) {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                        }
+                    }
+                    .foregroundStyle(.primary)
+                }
+            } header: {
+                Text("Collections")
+            } footer: {
+                Text("Select one or more collections, or leave on \"All\".")
             }
 
             Section("Batch size") {
@@ -39,7 +70,7 @@ struct PracticeSetupView: View {
             await collectionStore.loadFromRemote()
         }
         .fullScreenCover(isPresented: $isPresentingSession) {
-            PracticeSessionView(collectionId: selectedCollectionId, batchSize: batchSize)
+            PracticeSessionView(collectionIds: selectedCollectionIds, batchSize: batchSize)
         }
     }
 }

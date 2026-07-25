@@ -190,16 +190,21 @@ final class WordStore: ObservableObject {
     }
 
     /// Assembles a practice batch from the current in-memory word set for
-    /// `collectionId`, or across all collections when `collectionId` is nil
-    /// (the brief's "All" option).
-    func assembleBatch(collectionId: UUID?, batchSize: Int, now: Date = Date()) -> [Word] {
-        let pool = collectionId.map(words(in:)) ?? words
+    /// `collectionIds`, or across all collections when `collectionIds` is
+    /// nil or empty (the brief's "All" option).
+    func assembleBatch(collectionIds: Set<UUID>?, batchSize: Int, now: Date = Date()) -> [Word] {
+        let pool = pool(for: collectionIds)
         return ReviewScheduler.assembleBatch(from: pool, batchSize: batchSize, now: now)
     }
 
-    func isFullyRetired(collectionId: UUID?, now: Date = Date()) -> Bool {
-        let pool = collectionId.map(words(in:)) ?? words
+    func isFullyRetired(collectionIds: Set<UUID>?, now: Date = Date()) -> Bool {
+        let pool = pool(for: collectionIds)
         return ReviewScheduler.isFullyRetired(pool, now: now)
+    }
+
+    private func pool(for collectionIds: Set<UUID>?) -> [Word] {
+        guard let collectionIds, !collectionIds.isEmpty else { return words }
+        return words.filter { collectionIds.contains($0.collectionId) }
     }
 
     /// Applies one swipe: runs the pure `ReviewScheduler`, writes the
