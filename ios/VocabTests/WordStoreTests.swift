@@ -26,6 +26,49 @@ final class WordStoreTests: XCTestCase {
         XCTAssertEqual(store.words(in: collectionId).map(\.id), [inCollection.id])
     }
 
+    // MARK: - assembleBatch/isFullyRetired collection filtering
+
+    func testAssembleBatchWithNilCollectionIdsPullsFromEveryCollection() {
+        let inCollection = makeWord()
+        let other = Word(collectionId: UUID(), term: "x", translation: "y")
+        let store = makeStore(words: [inCollection, other])
+
+        let batch = store.assembleBatch(collectionIds: nil, batchSize: 10)
+
+        XCTAssertEqual(Set(batch.map(\.id)), [inCollection.id, other.id])
+    }
+
+    func testAssembleBatchWithEmptyCollectionIdsPullsFromEveryCollection() {
+        let inCollection = makeWord()
+        let other = Word(collectionId: UUID(), term: "x", translation: "y")
+        let store = makeStore(words: [inCollection, other])
+
+        let batch = store.assembleBatch(collectionIds: [], batchSize: 10)
+
+        XCTAssertEqual(Set(batch.map(\.id)), [inCollection.id, other.id])
+    }
+
+    func testAssembleBatchWithMultipleCollectionIdsUnionsTheirWords() {
+        let otherCollectionId = UUID()
+        let inFirstCollection = makeWord()
+        let inSecondCollection = Word(collectionId: otherCollectionId, term: "x", translation: "y")
+        let inThirdCollection = Word(collectionId: UUID(), term: "z", translation: "w")
+        let store = makeStore(words: [inFirstCollection, inSecondCollection, inThirdCollection])
+
+        let batch = store.assembleBatch(collectionIds: [collectionId, otherCollectionId], batchSize: 10)
+
+        XCTAssertEqual(Set(batch.map(\.id)), [inFirstCollection.id, inSecondCollection.id])
+    }
+
+    func testIsFullyRetiredOnlyConsidersSelectedCollections() {
+        let retiredElsewhere = makeWord(status: .retired)
+        let dueInOtherCollection = Word(collectionId: UUID(), term: "x", translation: "y", status: .new)
+        let store = makeStore(words: [retiredElsewhere, dueInOtherCollection])
+
+        XCTAssertTrue(store.isFullyRetired(collectionIds: [collectionId]))
+        XCTAssertFalse(store.isFullyRetired(collectionIds: [collectionId, dueInOtherCollection.collectionId]))
+    }
+
     func testAddAppendsWord() {
         let store = makeStore(words: [])
         let word = makeWord()

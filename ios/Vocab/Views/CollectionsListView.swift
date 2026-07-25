@@ -65,8 +65,9 @@ struct CollectionsListView: View {
             TextField("Name", text: $renameText)
             Button("Cancel", role: .cancel) { renamingCollection = nil }
             Button("Save") {
-                if let renamingCollection, !renameText.isEmpty {
-                    collectionStore.rename(renamingCollection.id, to: renameText)
+                let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let renamingCollection, !trimmed.isEmpty {
+                    collectionStore.rename(renamingCollection.id, to: trimmed)
                 }
                 renamingCollection = nil
             }

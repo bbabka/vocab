@@ -30,8 +30,12 @@ struct AddCollectionView: View {
         nativeLanguageSelection == otherLanguageTag ? customNativeLanguage.trimmingCharacters(in: .whitespaces) : nativeLanguageSelection
     }
 
+    private var resolvedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var canCreate: Bool {
-        guard !name.isEmpty else { return false }
+        guard !resolvedName.isEmpty else { return false }
         guard !resolvedTargetLanguage.isEmpty, !resolvedNativeLanguage.isEmpty else { return false }
         return true
     }
@@ -77,7 +81,7 @@ struct AddCollectionView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Create") {
                         collectionStore.add(
-                            WordCollection(name: name, targetLanguage: resolvedTargetLanguage, nativeLanguage: resolvedNativeLanguage)
+                            WordCollection(name: resolvedName, targetLanguage: resolvedTargetLanguage, nativeLanguage: resolvedNativeLanguage)
                         )
                         dismiss()
                     }
