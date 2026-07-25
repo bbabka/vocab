@@ -170,6 +170,14 @@ struct WordDetailView: View {
                 TextField("Pronunciation", text: optionalText(wordBinding.pronunciation))
             }
 
+            Section("Collection") {
+                Picker("Collection", selection: wordBinding.collectionId) {
+                    ForEach(collectionStore.collections) { collection in
+                        Text(collection.name).tag(collection.id)
+                    }
+                }
+            }
+
             Section("Meanings") {
                 ForEach(wordBinding.meanings, editActions: .delete) { $meaning in
                     HStack {
