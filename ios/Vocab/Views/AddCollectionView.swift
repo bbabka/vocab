@@ -16,12 +16,12 @@ struct AddCollectionView: View {
 
     /// `target_language`/`native_language` are free BCP-47 strings with no
     /// server-side validation (see `Language.swift`) — `Language.common` is
-    /// only a curated convenience list, so "Other" just exposes that same
-    /// freedom in the UI. Useful for a language Apple's Translation
-    /// framework doesn't support yet (e.g. Danish, landing in a future iOS):
-    /// add the collection now with manual entry, and once the pair becomes
-    /// available, `TranslationService.checkAvailability` (a runtime check,
-    /// not a hardcoded list) picks it up automatically — nothing to migrate.
+    /// only a convenience list, so "Other" just exposes that same freedom in
+    /// the UI. Useful for a locale variant `Language.common`'s ISO 639-1
+    /// codes don't cover (e.g. a script or region subtag): add the
+    /// collection now with manual entry, and
+    /// `TranslationService.checkAvailability` (a runtime check, not a
+    /// hardcoded list) picks up autotranslate support for it automatically.
     private var resolvedTargetLanguage: String {
         targetLanguageSelection == otherLanguageTag ? customTargetLanguage.trimmingCharacters(in: .whitespaces) : targetLanguageSelection
     }

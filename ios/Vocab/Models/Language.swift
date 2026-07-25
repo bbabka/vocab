@@ -1,33 +1,23 @@
 import Foundation
 
-/// A curated pick-list for the collection-creation UI. `WordCollection`'s
+/// A convenience pick-list for the collection-creation UI. `WordCollection`'s
 /// `targetLanguage`/`nativeLanguage` are free BCP-47 strings with no server-
-/// side validation (see the brief) — this list is just a convenience picker,
-/// not an allowlist.
+/// side validation (see the brief) — this list is not an allowlist, and
+/// autotranslate availability is a separate runtime check
+/// (`TranslationService.checkAvailability`) that isn't gated by it (e.g.
+/// Danish translates fine despite the old hand-picked list omitting it).
+/// Built from every ISO 639-1 code Foundation knows a localized name for,
+/// rather than hand-maintaining a short list that inevitably falls behind.
 struct Language: Identifiable, Hashable {
     let code: String
     let name: String
 
     var id: String { code }
 
-    static let common: [Language] = [
-        Language(code: "en", name: "English"),
-        Language(code: "es", name: "Spanish"),
-        Language(code: "fr", name: "French"),
-        Language(code: "de", name: "German"),
-        Language(code: "it", name: "Italian"),
-        Language(code: "pt", name: "Portuguese"),
-        Language(code: "nl", name: "Dutch"),
-        Language(code: "sv", name: "Swedish"),
-        Language(code: "pl", name: "Polish"),
-        Language(code: "ru", name: "Russian"),
-        Language(code: "tr", name: "Turkish"),
-        Language(code: "ar", name: "Arabic"),
-        Language(code: "hi", name: "Hindi"),
-        Language(code: "ja", name: "Japanese"),
-        Language(code: "ko", name: "Korean"),
-        Language(code: "zh", name: "Chinese"),
-        Language(code: "vi", name: "Vietnamese"),
-        Language(code: "cs", name: "Czech"),
-    ]
+    static let common: [Language] = Locale.LanguageCode.isoLanguageCodes
+        .filter { $0.identifier.count == 2 }
+        .compactMap { code in
+            Locale.current.localizedString(forLanguageCode: code.identifier).map { Language(code: code.identifier, name: $0) }
+        }
+        .sorted { $0.name < $1.name }
 }
