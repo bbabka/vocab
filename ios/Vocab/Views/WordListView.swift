@@ -29,7 +29,8 @@ struct WordListView: View {
     private var filteredWords: [Word] {
         var result = wordStore.words(in: collectionId)
         if let status = filter.status {
-            result = result.filter { $0.status == status }
+            let recognizeStatusByWordId = wordStore.recognizeStatusByWordId
+            result = result.filter { recognizeStatusByWordId[$0.id] == status }
         }
         if !searchText.isEmpty {
             result = result.filter {
@@ -41,6 +42,7 @@ struct WordListView: View {
     }
 
     var body: some View {
+        let recognizeStatusByWordId = wordStore.recognizeStatusByWordId
         List {
             Picker("Filter", selection: $filter) {
                 ForEach(StatusFilter.allCases) { option in
@@ -52,7 +54,7 @@ struct WordListView: View {
 
             ForEach(filteredWords) { word in
                 NavigationLink(value: WordRoute(id: word.id)) {
-                    WordRow(word: word)
+                    WordRow(word: word, status: recognizeStatusByWordId[word.id] ?? .new)
                 }
             }
             .onDelete { offsets in
@@ -83,6 +85,7 @@ struct WordListView: View {
 
 private struct WordRow: View {
     let word: Word
+    let status: WordStatus
 
     private var meaningsSummary: String {
         word.meanings
@@ -99,7 +102,7 @@ private struct WordRow: View {
                 }
             }
             Spacer()
-            StatusBadge(status: word.status)
+            StatusBadge(status: status)
             ImportanceDots(importance: word.importance)
         }
     }

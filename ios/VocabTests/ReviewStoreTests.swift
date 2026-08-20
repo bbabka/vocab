@@ -6,9 +6,10 @@ final class ReviewStoreTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_700_000_000)
 
     private func makeOutcome(activityDate: CalendarDay) -> ReviewScheduler.Outcome {
-        let word = Word(collectionId: UUID(), term: "t", translation: "t")
-        let log = ReviewLogEntry(wordId: word.id, result: .know, phase: .active, statusBefore: .new, statusAfter: .learning, reviewedAt: now)
-        return ReviewScheduler.Outcome(word: word, log: log, activityDate: activityDate)
+        let wordId = UUID()
+        let progress = WordProgress(wordId: wordId, direction: .recognize, status: .learning)
+        let log = ReviewLogEntry(wordId: wordId, direction: .recognize, result: .know, phase: .active, statusBefore: .new, statusAfter: .learning, reviewedAt: now)
+        return ReviewScheduler.Outcome(progress: progress, log: log, activityDate: activityDate)
     }
 
     private func makeStore(reviewLog: [ReviewLogEntry] = [], dailyActivity: [DailyActivity] = []) -> ReviewStore {

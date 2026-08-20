@@ -2,17 +2,19 @@ import Foundation
 import Supabase
 
 /// Owns a single Realtime channel subscribed to `postgres_changes` on
-/// `words`, `collections`, and `daily_activity` — RLS scopes delivery to the
-/// signed-in user's own rows automatically, same as every REST fetch.
-/// `review_log` is deliberately not subscribed (write-mostly, online-only,
-/// per `ReviewStore`'s own comment). Each table's incoming rows are handed
-/// to that store's own `applyRealtimeChange`, which reconciles them the same
-/// way a `loadFromRemote()` fetch would.
+/// `words`, `word_progress`, `collections`, and `daily_activity` — RLS
+/// scopes delivery to the signed-in user's own rows automatically, same as
+/// every REST fetch. `review_log` is deliberately not subscribed
+/// (write-mostly, online-only, per `ReviewStore`'s own comment). Each
+/// table's incoming rows are handed to that store's own
+/// `applyRealtimeChange`, which reconciles them the same way a
+/// `loadFromRemote()` fetch would.
 @MainActor
 final class RealtimeService: ObservableObject {
     private let client: SupabaseClient
     private var channel: RealtimeChannelV2?
     private var wordsTask: Task<Void, Never>?
+    private var wordProgressTask: Task<Void, Never>?
     private var collectionsTask: Task<Void, Never>?
     private var activityTask: Task<Void, Never>?
 
@@ -30,12 +32,18 @@ final class RealtimeService: ObservableObject {
         self.channel = channel
 
         let wordChanges = channel.postgresChange(AnyAction.self, table: "words")
+        let wordProgressChanges = channel.postgresChange(AnyAction.self, table: "word_progress")
         let collectionChanges = channel.postgresChange(AnyAction.self, table: "collections")
         let activityChanges = channel.postgresChange(AnyAction.self, table: "daily_activity")
 
         wordsTask = Task { @MainActor in
             for await change in wordChanges {
                 wordStore.applyRealtimeChange(change)
+            }
+        }
+        wordProgressTask = Task { @MainActor in
+            for await change in wordProgressChanges {
+                wordStore.applyRealtimeProgressChange(change)
             }
         }
         collectionsTask = Task { @MainActor in
@@ -58,9 +66,11 @@ final class RealtimeService: ObservableObject {
     /// fresh subscription instead of silently no-op'ing against a dead one.
     func stop() async {
         wordsTask?.cancel()
+        wordProgressTask?.cancel()
         collectionsTask?.cancel()
         activityTask?.cancel()
         wordsTask = nil
+        wordProgressTask = nil
         collectionsTask = nil
         activityTask = nil
 

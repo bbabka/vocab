@@ -68,6 +68,11 @@ struct WordMeaning: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+/// Identity/content only — no scheduling state. Recall Layer (v2) moved
+/// `status`/`knowCount`/`intervalStep`/`dueAt`/`timesSeen` off this struct
+/// and into `WordProgress`, one row per (word, direction), since scheduling
+/// now runs independently per direction. See
+/// vocab-rev_direction-brief.md's "Recall Layer" section.
 struct Word: Identifiable, Codable, Equatable, Sendable {
     var id: UUID
     var collectionId: UUID
@@ -75,12 +80,12 @@ struct Word: Identifiable, Codable, Equatable, Sendable {
     var meanings: [WordMeaning]
     var pronunciation: String?
     var exampleSentence: String?
-    var status: WordStatus
     var importance: Int
-    var knowCount: Int
-    var intervalStep: Int
-    var dueAt: Date?
-    var timesSeen: Int
+    /// Set once, permanently, the first time this word's `recognize`
+    /// progress reaches `learnt` — the one-way latch that unlocks `recall`
+    /// practice. `nil` means recall is not yet eligible. Never unset by a
+    /// later `recognize` demotion (see the brief's "Gated unlock").
+    var recallUnlockedAt: Date?
     var createdAt: Date
     var updatedAt: Date
 
@@ -91,12 +96,8 @@ struct Word: Identifiable, Codable, Equatable, Sendable {
         meanings: [WordMeaning] = [],
         pronunciation: String? = nil,
         exampleSentence: String? = nil,
-        status: WordStatus = .new,
         importance: Int = 2,
-        knowCount: Int = 0,
-        intervalStep: Int = 0,
-        dueAt: Date? = nil,
-        timesSeen: Int = 0,
+        recallUnlockedAt: Date? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -106,12 +107,8 @@ struct Word: Identifiable, Codable, Equatable, Sendable {
         self.meanings = meanings
         self.pronunciation = pronunciation
         self.exampleSentence = exampleSentence
-        self.status = status
         self.importance = importance
-        self.knowCount = knowCount
-        self.intervalStep = intervalStep
-        self.dueAt = dueAt
-        self.timesSeen = timesSeen
+        self.recallUnlockedAt = recallUnlockedAt
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -126,12 +123,8 @@ struct Word: Identifiable, Codable, Equatable, Sendable {
         partOfSpeech: PartOfSpeech = .other,
         pronunciation: String? = nil,
         exampleSentence: String? = nil,
-        status: WordStatus = .new,
         importance: Int = 2,
-        knowCount: Int = 0,
-        intervalStep: Int = 0,
-        dueAt: Date? = nil,
-        timesSeen: Int = 0,
+        recallUnlockedAt: Date? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -142,12 +135,8 @@ struct Word: Identifiable, Codable, Equatable, Sendable {
             meanings: translation.isEmpty ? [] : [WordMeaning(translation: translation, partOfSpeech: partOfSpeech)],
             pronunciation: pronunciation,
             exampleSentence: exampleSentence,
-            status: status,
             importance: importance,
-            knowCount: knowCount,
-            intervalStep: intervalStep,
-            dueAt: dueAt,
-            timesSeen: timesSeen,
+            recallUnlockedAt: recallUnlockedAt,
             createdAt: createdAt,
             updatedAt: updatedAt
         )

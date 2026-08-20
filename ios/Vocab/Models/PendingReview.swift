@@ -22,6 +22,7 @@ enum SyncStatus: String, Codable, Sendable {
 struct PendingReview: Identifiable, Codable, Equatable, Sendable {
     var id: UUID
     var wordId: UUID
+    var direction: PracticeDirection
     var result: ReviewResult
     var phase: ReviewPhase
     var statusBefore: WordStatus
@@ -42,14 +43,15 @@ struct PendingReview: Identifiable, Codable, Equatable, Sendable {
     init(outcome: ReviewScheduler.Outcome) {
         self.id = outcome.log.id
         self.wordId = outcome.log.wordId
+        self.direction = outcome.log.direction
         self.result = outcome.log.result
         self.phase = outcome.log.phase
         self.statusBefore = outcome.log.statusBefore
         self.statusAfter = outcome.log.statusAfter
-        self.knowCountAfter = outcome.word.knowCount
-        self.intervalStepAfter = outcome.word.intervalStep
-        self.dueAtAfter = outcome.word.dueAt
-        self.timesSeenAfter = outcome.word.timesSeen
+        self.knowCountAfter = outcome.progress.knowCount
+        self.intervalStepAfter = outcome.progress.intervalStep
+        self.dueAtAfter = outcome.progress.dueAt
+        self.timesSeenAfter = outcome.progress.timesSeen
         self.clientReviewedAt = outcome.log.reviewedAt
         self.activityDate = outcome.activityDate
         self.syncStatus = .pending

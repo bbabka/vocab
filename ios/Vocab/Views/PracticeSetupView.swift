@@ -4,6 +4,7 @@ struct PracticeSetupView: View {
     @EnvironmentObject private var collectionStore: CollectionStore
     @State private var selectedCollectionIds: Set<UUID> = []
     @State private var batchSize = 20
+    @State private var direction: PracticeDirection = .recognize
     @State private var isPresentingSession = false
 
     private let batchSizeOptions = [10, 20, 30]
@@ -60,6 +61,23 @@ struct PracticeSetupView: View {
             }
 
             Section {
+                Picker("Direction", selection: $direction) {
+                    Text("Recognize").tag(PracticeDirection.recognize)
+                    Text("Recall").tag(PracticeDirection.recall)
+                }
+                .pickerStyle(.segmented)
+            } header: {
+                Text("Direction")
+            } footer: {
+                switch direction {
+                case .recognize:
+                    Text("See the word, recall its meaning.")
+                case .recall:
+                    Text("See the meaning, produce the word. Only words you've already learnt to recognize are eligible — recall has its own progress and schedule.")
+                }
+            }
+
+            Section {
                 Button("Start Practice") {
                     isPresentingSession = true
                 }
@@ -70,7 +88,7 @@ struct PracticeSetupView: View {
             await collectionStore.loadFromRemote()
         }
         .fullScreenCover(isPresented: $isPresentingSession) {
-            PracticeSessionView(collectionIds: selectedCollectionIds, batchSize: batchSize)
+            PracticeSessionView(collectionIds: selectedCollectionIds, batchSize: batchSize, direction: direction)
         }
     }
 }

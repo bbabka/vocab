@@ -23,6 +23,7 @@ enum PendingReviewAPI {
     private struct Params: Encodable {
         let pId: UUID
         let pWordId: UUID
+        let pDirection: PracticeDirection
         let pResult: ReviewResult
         let pPhase: ReviewPhase
         let pStatusBefore: WordStatus
@@ -39,6 +40,7 @@ enum PendingReviewAPI {
         let params = Params(
             pId: review.id,
             pWordId: review.wordId,
+            pDirection: review.direction,
             pResult: review.result,
             pPhase: review.phase,
             pStatusBefore: review.statusBefore,

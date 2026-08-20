@@ -14,6 +14,13 @@ struct WordDetailView: View {
         return collectionStore.collections.first { $0.id == draft.collectionId }
     }
 
+    /// `recognize` is the word's "headline" state (see the brief's "What
+    /// 'learnt' means at the word level") — this screen shows/edits that
+    /// direction's progress, never `recall`'s.
+    private var recognizeProgress: WordProgress? {
+        wordStore.recognizeProgress(for: wordId)
+    }
+
     var body: some View {
         Group {
             if let draft {
@@ -74,7 +81,7 @@ struct WordDetailView: View {
                     }
                 }
                 Spacer()
-                StatusBadge(status: word.status)
+                StatusBadge(status: recognizeProgress?.status ?? .new)
             }
 
             if !word.meanings.isEmpty {
@@ -121,16 +128,20 @@ struct WordDetailView: View {
                 .font(.headline)
                 .padding(.bottom, 8)
 
-            statRow("Status", value: word.status.rawValue.capitalized)
+            statRow("Status", value: (recognizeProgress?.status ?? .new).rawValue.capitalized)
             Divider()
             statRow("Importance", value: String(repeating: "★", count: word.importance))
             Divider()
-            statRow("Times seen", value: "\(word.timesSeen)")
+            statRow("Times seen", value: "\(recognizeProgress?.timesSeen ?? 0)")
             Divider()
-            statRow("Know count", value: "\(word.knowCount)")
-            if let dueAt = word.dueAt {
+            statRow("Know count", value: "\(recognizeProgress?.knowCount ?? 0)")
+            if let dueAt = recognizeProgress?.dueAt {
                 Divider()
                 statRow("Next check-in", value: dueAt.formatted(date: .abbreviated, time: .omitted))
+            }
+            if let recallUnlockedAt = word.recallUnlockedAt {
+                Divider()
+                statRow("Recall unlocked", value: recallUnlockedAt.formatted(date: .abbreviated, time: .omitted))
             }
         }
         .padding()
@@ -214,13 +225,26 @@ struct WordDetailView: View {
 
             Section("Practice") {
                 Stepper("Importance: \(wordBinding.wrappedValue.importance)", value: wordBinding.importance, in: 1...3)
-                Picker("Status", selection: wordBinding.status) {
+                // Bound to `wordStore.setStatus`, not `wordBinding` like the
+                // fields above: status lives on `WordProgress` now, and a
+                // manual override needs to reset knowCount/intervalStep/dueAt
+                // to sensible defaults for the chosen status (see
+                // `setStatus`'s doc comment) — a plain field edit through the
+                // generic draft/persist-on-disappear path can't do that.
+                Picker("Status", selection: statusBinding) {
                     ForEach(WordStatus.allCases, id: \.self) { status in
                         Text(status.rawValue.capitalized).tag(status)
                     }
                 }
             }
         }
+    }
+
+    private var statusBinding: Binding<WordStatus> {
+        Binding(
+            get: { recognizeProgress?.status ?? .new },
+            set: { wordStore.setStatus($0, for: wordId) }
+        )
     }
 
     private func optionalText(_ binding: Binding<String?>) -> Binding<String> {

@@ -9,9 +9,10 @@ import XCTest
 @MainActor
 final class AuthStoreTests: XCTestCase {
     private func makeReview() -> PendingReview {
-        let word = Word(collectionId: UUID(), term: "t", translation: "t")
-        let log = ReviewLogEntry(wordId: word.id, result: .know, phase: .active, statusBefore: .new, statusAfter: .learning)
-        return PendingReview(outcome: ReviewScheduler.Outcome(word: word, log: log, activityDate: CalendarDay(date: Date())))
+        let wordId = UUID()
+        let progress = WordProgress(wordId: wordId, direction: .recognize, status: .learning)
+        let log = ReviewLogEntry(wordId: wordId, direction: .recognize, result: .know, phase: .active, statusBefore: .new, statusAfter: .learning)
+        return PendingReview(outcome: ReviewScheduler.Outcome(progress: progress, log: log, activityDate: CalendarDay(date: Date())))
     }
 
     func testSignOutRefusesAndSetsAnErrorWhenTheOutboxHasUnsyncedReviews() async throws {

@@ -1,8 +1,9 @@
 import Foundation
 
-/// Mock data spans every status/phase combination so the mock-first UI
-/// immediately exercises the full session-assembly logic (due resurface,
-/// not-yet-due resurface, active deck at various knowCounts, retired) rather
+/// Mock data spans every status/phase combination, in both directions, so
+/// the mock-first UI immediately exercises the full session-assembly logic
+/// (due resurface, not-yet-due resurface, active deck at various
+/// knowCounts, retired, recall not-yet-unlocked/in-progress/learnt) rather
 /// than just a happy path of all-new words.
 enum MockData {
     static let spanishTravel = WordCollection(
@@ -30,7 +31,6 @@ enum MockData {
             term: "el aeropuerto",
             translation: "the airport",
             exampleSentence: "El aeropuerto está lejos del centro.",
-            status: .new,
             importance: 2,
             createdAt: Date().addingTimeInterval(-2 * 86400)
         ),
@@ -39,10 +39,7 @@ enum MockData {
             collectionId: spanishTravel.id,
             term: "la maleta",
             translation: "the suitcase",
-            status: .learning,
             importance: 3,
-            knowCount: 1,
-            timesSeen: 2,
             createdAt: Date().addingTimeInterval(-5 * 86400)
         ),
         // One "know" away from graduating.
@@ -50,49 +47,35 @@ enum MockData {
             collectionId: spanishTravel.id,
             term: "el billete",
             translation: "the ticket",
-            status: .learning,
             importance: 2,
-            knowCount: SchedulingConstants.learntThreshold - 1,
-            timesSeen: 4,
             createdAt: Date().addingTimeInterval(-6 * 86400)
         ),
-        // Learnt, overdue for resurface check-in.
+        // Recognize learnt (overdue for resurface); recall unlocked but not
+        // yet started.
         Word(
             collectionId: spanishTravel.id,
             term: "el pasaporte",
             translation: "the passport",
-            status: .learnt,
             importance: 3,
-            knowCount: SchedulingConstants.learntThreshold,
-            intervalStep: 0,
-            dueAt: Date().addingTimeInterval(-1 * 86400),
-            timesSeen: 5,
+            recallUnlockedAt: Date().addingTimeInterval(-10 * 86400),
             createdAt: Date().addingTimeInterval(-14 * 86400)
         ),
-        // Learnt, not due yet.
+        // Recognize learnt (not due yet); recall in progress.
         Word(
             collectionId: spanishTravel.id,
             term: "la reserva",
             translation: "the reservation",
-            status: .learnt,
             importance: 1,
-            knowCount: SchedulingConstants.learntThreshold,
-            intervalStep: 1,
-            dueAt: Date().addingTimeInterval(10 * 86400),
-            timesSeen: 6,
+            recallUnlockedAt: Date().addingTimeInterval(-15 * 86400),
             createdAt: Date().addingTimeInterval(-20 * 86400)
         ),
-        // Fully retired — proven durable, out of rotation.
+        // Recognize retired; recall itself already reached learnt too.
         Word(
             collectionId: spanishTravel.id,
             term: "gracias",
             translation: "thank you",
-            status: .retired,
             importance: 1,
-            knowCount: SchedulingConstants.learntThreshold,
-            intervalStep: 3,
-            dueAt: nil,
-            timesSeen: 9,
+            recallUnlockedAt: Date().addingTimeInterval(-80 * 86400),
             createdAt: Date().addingTimeInterval(-90 * 86400)
         ),
         // A second collection with just one fresh word.
@@ -100,11 +83,63 @@ enum MockData {
             collectionId: germanBasics.id,
             term: "der Bahnhof",
             translation: "the train station",
-            status: .new,
             importance: 2,
             createdAt: Date().addingTimeInterval(-1 * 86400)
         ),
     ]
+
+    /// One `recognize` progress row per word (mirrors the DB's
+    /// `words_seed_recognize_progress` trigger), plus a `recall` row for
+    /// every word whose `recognize` track has reached `learnt`/`retired`
+    /// (mirrors `word_progress_unlock_recall`).
+    static let wordProgress: [WordProgress] = {
+        let airport = words[0]
+        let suitcase = words[1]
+        let ticket = words[2]
+        let passport = words[3]
+        let reservation = words[4]
+        let thanks = words[5]
+        let trainStation = words[6]
+
+        return [
+            // Fresh, untouched.
+            WordProgress(wordId: airport.id, direction: .recognize, status: .new),
+            // Mid-conveyor, one "don't know" away from being reset again.
+            WordProgress(wordId: suitcase.id, direction: .recognize, status: .learning, knowCount: 1, timesSeen: 2),
+            // One "know" away from graduating.
+            WordProgress(
+                wordId: ticket.id, direction: .recognize, status: .learning,
+                knowCount: SchedulingConstants.learntThreshold - 1, timesSeen: 4
+            ),
+            // Learnt, overdue for resurface check-in. Recall unlocked, still new.
+            WordProgress(
+                wordId: passport.id, direction: .recognize, status: .learnt,
+                knowCount: SchedulingConstants.learntThreshold, intervalStep: 0,
+                dueAt: Date().addingTimeInterval(-1 * 86400), timesSeen: 5
+            ),
+            WordProgress(wordId: passport.id, direction: .recall, status: .new),
+            // Learnt, not due yet. Recall in progress.
+            WordProgress(
+                wordId: reservation.id, direction: .recognize, status: .learnt,
+                knowCount: SchedulingConstants.learntThreshold, intervalStep: 1,
+                dueAt: Date().addingTimeInterval(10 * 86400), timesSeen: 6
+            ),
+            WordProgress(wordId: reservation.id, direction: .recall, status: .learning, knowCount: 1, timesSeen: 1),
+            // Recognize fully retired — proven durable, out of rotation.
+            // Recall independently reached learnt and is on its own ladder.
+            WordProgress(
+                wordId: thanks.id, direction: .recognize, status: .retired,
+                knowCount: SchedulingConstants.learntThreshold, intervalStep: 3, dueAt: nil, timesSeen: 9
+            ),
+            WordProgress(
+                wordId: thanks.id, direction: .recall, status: .learnt,
+                knowCount: SchedulingConstants.learntThreshold, intervalStep: 0,
+                dueAt: Date().addingTimeInterval(5 * 86400), timesSeen: 3
+            ),
+            // Fresh, untouched (second collection).
+            WordProgress(wordId: trainStation.id, direction: .recognize, status: .new),
+        ]
+    }()
 
     static let dailyActivity: [DailyActivity] = {
         let today = CalendarDay(date: Date())

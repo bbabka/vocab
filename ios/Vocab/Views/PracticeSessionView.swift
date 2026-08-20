@@ -8,25 +8,38 @@ import SwiftUI
 struct PracticeSessionView: View {
     let collectionIds: Set<UUID>?
     let batchSize: Int
+    let direction: PracticeDirection
 
     @EnvironmentObject private var wordStore: WordStore
     @EnvironmentObject private var reviewStore: ReviewStore
     @EnvironmentObject private var collectionStore: CollectionStore
     @Environment(\.dismiss) private var dismiss
 
-    @State private var batch: [Word] = []
+    @State private var batch: [PracticeCard] = []
+    @State private var hasLoadedBatch = false
     @State private var currentIndex = 0
     @State private var isFlipped = false
     @State private var dragOffset: CGSize = .zero
     @State private var tally = SessionTally()
     @State private var isFinished = false
 
-    private var currentWord: Word? {
+    /// True only once `assembleBatch` has actually run and come back empty —
+    /// distinct from `isFinished`, which means a session was swiped through
+    /// to completion. Without this, a session that never had any eligible
+    /// cards (e.g. recall before any word has unlocked it) fell into the
+    /// exact same "Session Complete" screen as a real finished session,
+    /// showing a misleading 0/0/0 tally instead of explaining why there's
+    /// nothing to review.
+    private var isEmptyFromTheStart: Bool {
+        hasLoadedBatch && !isFinished && currentCard == nil
+    }
+
+    private var currentCard: PracticeCard? {
         guard currentIndex < batch.count else { return nil }
         return batch[currentIndex]
     }
 
-    private var nextWord: Word? {
+    private var nextCard: PracticeCard? {
         let nextIndex = currentIndex + 1
         guard nextIndex < batch.count else { return nil }
         return batch[nextIndex]
@@ -55,27 +68,64 @@ struct PracticeSessionView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if isFinished || currentWord == nil {
+                if !hasLoadedBatch {
+                    ProgressView()
+                } else if isEmptyFromTheStart {
+                    emptyState
+                } else if isFinished || currentCard == nil {
                     PracticeSummaryView(tally: tally) { dismiss() }
-                } else if let word = currentWord {
-                    cardStack(for: word)
+                } else if let card = currentCard {
+                    cardStack(for: card)
                 }
             }
             .navigationTitle("Practice")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("End") { isFinished = true }
+                    if isEmptyFromTheStart {
+                        Button("Done") { dismiss() }
+                    } else {
+                        Button("End") { isFinished = true }
+                    }
                 }
             }
         }
-        .onAppear {
-            batch = wordStore.assembleBatch(collectionIds: collectionIds, batchSize: batchSize)
+        // `.task`, not `.onAppear`: a session used to assemble its batch
+        // straight from whatever `wordStore` already had in memory, which
+        // is stale the moment something changed server-side since the last
+        // fetch/Realtime event landed — e.g. a manual status override in
+        // Word Detail unlocks a new `recall` progress row server-side (via
+        // the DB trigger), but the client only learns about that new row
+        // through a fresh fetch or Realtime, neither of which a plain
+        // in-memory `assembleBatch` call waits for. Refreshing here means a
+        // session always starts from a real fetch, not a hopeful cache read.
+        .task {
+            await wordStore.loadFromRemote()
+            batch = wordStore.assembleBatch(collectionIds: collectionIds, direction: direction, batchSize: batchSize)
+            hasLoadedBatch = true
         }
     }
 
     @ViewBuilder
-    private func cardStack(for word: Word) -> some View {
+    private var emptyState: some View {
+        ContentUnavailableView {
+            Label("Nothing to Review", systemImage: "checkmark.circle")
+        } description: {
+            Text(emptyStateMessage)
+        }
+    }
+
+    private var emptyStateMessage: String {
+        switch direction {
+        case .recognize:
+            "You're all caught up — nothing due right now."
+        case .recall:
+            "No words are ready for recall practice yet. Recall unlocks for a word once you've learnt it by recognizing it — keep practicing Recognize."
+        }
+    }
+
+    @ViewBuilder
+    private func cardStack(for card: PracticeCard) -> some View {
         VStack {
             Spacer()
 
@@ -83,8 +133,8 @@ struct PracticeSessionView: View {
                 // Revealed underneath as the current card is dragged away —
                 // stacked-deck effect. Never flipped (it isn't current yet)
                 // and ignores hit-testing so it can't steal the gesture.
-                if let nextWord {
-                    FlashcardView(word: nextWord, isFlipped: false, onSpeak: {})
+                if let nextCard {
+                    FlashcardView(word: nextCard.word, direction: direction, isFlipped: false, onSpeak: {})
                         .padding(.horizontal, 24)
                         .scaleEffect(0.94 + 0.06 * abs(dragProgress))
                         .opacity(abs(dragProgress))
@@ -95,11 +145,11 @@ struct PracticeSessionView: View {
                 // modal presentation, keep the draggable hit region away
                 // from the edges so it never overlaps an edge-originated
                 // system gesture.
-                FlashcardView(word: word, isFlipped: isFlipped, onSpeak: { speak(word) })
+                FlashcardView(word: card.word, direction: direction, isFlipped: isFlipped, onSpeak: { speak(card.word) })
                     .padding(.horizontal, 24)
                     .offset(dragOffset)
                     .rotationEffect(.degrees(Double(dragOffset.width / 20)))
-                    .gesture(dragGesture(for: word))
+                    .gesture(dragGesture(for: card))
                     .onTapGesture { isFlipped.toggle() }
             }
 
@@ -116,7 +166,7 @@ struct PracticeSessionView: View {
                 .ignoresSafeArea()
         )
         .overlay(alignment: .bottomTrailing) {
-            skipButton(for: word)
+            skipButton(for: card)
         }
     }
 
@@ -124,9 +174,9 @@ struct PracticeSessionView: View {
     /// gesture — keeps `dragOffset` purely horizontal so the background
     /// tint and `resolveSwipe`'s classification read from the same value
     /// and can never disagree.
-    private func skipButton(for word: Word) -> some View {
+    private func skipButton(for card: PracticeCard) -> some View {
         Button {
-            flingOffScreen(.skip, for: word)
+            flingOffScreen(.skip, for: card)
         } label: {
             Label("Skip", systemImage: "arrow.uturn.right")
                 .labelStyle(.iconOnly)
@@ -139,7 +189,7 @@ struct PracticeSessionView: View {
         .padding(20)
     }
 
-    private func dragGesture(for word: Word) -> some Gesture {
+    private func dragGesture(for card: PracticeCard) -> some Gesture {
         DragGesture(minimumDistance: 20)
             .onChanged { value in
                 // Horizontal-only: skip is now a button, not a drag
@@ -149,7 +199,7 @@ struct PracticeSessionView: View {
             .onEnded { value in
                 let swipe = resolveSwipe(value.translation.width)
                 if let swipe {
-                    flingOffScreen(swipe, for: word)
+                    flingOffScreen(swipe, for: card)
                 } else {
                     withAnimation(.spring) { dragOffset = .zero }
                 }
@@ -188,16 +238,16 @@ struct PracticeSessionView: View {
     /// would already be showing the *next* word's text — the new text and
     /// the departing card visually clashed. Separating "animate out" from
     /// "swap content, then snap in" fixes that.
-    private func flingOffScreen(_ swipe: ReviewResult, for word: Word) {
+    private func flingOffScreen(_ swipe: ReviewResult, for card: PracticeCard) {
         withAnimation(.easeOut(duration: 0.3)) {
             dragOffset = flyOffTarget(for: swipe)
         } completion: {
-            finishCommit(swipe, for: word)
+            finishCommit(swipe, for: card)
         }
     }
 
-    private func finishCommit(_ swipe: ReviewResult, for word: Word) {
-        if let outcome = wordStore.applySwipe(swipe, to: word.id) {
+    private func finishCommit(_ swipe: ReviewResult, for card: PracticeCard) {
+        if let outcome = wordStore.applySwipe(swipe, to: card.word.id, direction: direction) {
             reviewStore.record(outcome)
         }
         tally.record(swipe)
@@ -233,38 +283,38 @@ struct SessionTally {
     }
 }
 
+/// `.recognize`: front is `term`, back reveals meanings/example/pronunciation
+/// — unchanged from pre-Recall-Layer behavior. `.recall`: front/back flip —
+/// meanings are the prompt, `term` is the answer. The speaker button is
+/// hidden on the recall front: `term` isn't shown yet there, so speaking it
+/// would hand the user the answer before they've attempted to produce it.
 private struct FlashcardView: View {
     let word: Word
+    let direction: PracticeDirection
     let isFlipped: Bool
     let onSpeak: () -> Void
 
+    private var showsSpeaker: Bool {
+        direction == .recognize || isFlipped
+    }
+
     var body: some View {
         VStack(spacing: 12) {
-            if isFlipped {
-                ForEach(word.meanings) { meaning in
-                    HStack(spacing: 6) {
-                        if !meaning.partOfSpeech.abbreviation.isEmpty {
-                            Text(meaning.partOfSpeech.abbreviation)
-                                .foregroundStyle(.secondary)
-                                .italic()
-                        }
-                        Text(meaning.translation)
-                    }
-                    .font(.title2)
+            switch direction {
+            case .recognize:
+                if isFlipped {
+                    meanings
+                    exampleAndPronunciation
+                } else {
+                    Text(word.term).font(.largeTitle.bold())
                 }
-                if let exampleSentence = word.exampleSentence {
-                    Text(exampleSentence)
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
+            case .recall:
+                if isFlipped {
+                    Text(word.term).font(.largeTitle.bold())
+                    exampleAndPronunciation
+                } else {
+                    meanings
                 }
-                if let pronunciation = word.pronunciation {
-                    Text(pronunciation)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-            } else {
-                Text(word.term).font(.largeTitle.bold())
             }
         }
         .padding(32)
@@ -273,18 +323,50 @@ private struct FlashcardView: View {
         .overlay(alignment: .topTrailing) {
             // A plain-style `Button` intercepts its own tap, so this never
             // also triggers the card's flip `onTapGesture` underneath it.
-            Button(action: onSpeak) {
-                Image(systemName: "speaker.wave.2.fill")
-                    .foregroundStyle(.secondary)
-                    .padding(12)
+            if showsSpeaker {
+                Button(action: onSpeak) {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .foregroundStyle(.secondary)
+                        .padding(12)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private var meanings: some View {
+        ForEach(word.meanings) { meaning in
+            HStack(spacing: 6) {
+                if !meaning.partOfSpeech.abbreviation.isEmpty {
+                    Text(meaning.partOfSpeech.abbreviation)
+                        .foregroundStyle(.secondary)
+                        .italic()
+                }
+                Text(meaning.translation)
+            }
+            .font(.title2)
+        }
+    }
+
+    @ViewBuilder
+    private var exampleAndPronunciation: some View {
+        if let exampleSentence = word.exampleSentence {
+            Text(exampleSentence)
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        if let pronunciation = word.pronunciation {
+            Text(pronunciation)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
         }
     }
 }
 
 #Preview {
-    PracticeSessionView(collectionIds: nil, batchSize: 10)
+    PracticeSessionView(collectionIds: nil, batchSize: 10, direction: .recognize)
         .environmentObject(WordStore())
         .environmentObject(ReviewStore())
         .environmentObject(CollectionStore())

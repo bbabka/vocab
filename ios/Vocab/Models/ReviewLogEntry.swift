@@ -3,6 +3,7 @@ import Foundation
 struct ReviewLogEntry: Identifiable, Codable, Equatable, Sendable {
     var id: UUID
     var wordId: UUID
+    var direction: PracticeDirection
     var result: ReviewResult
     var phase: ReviewPhase
     var statusBefore: WordStatus
@@ -12,6 +13,7 @@ struct ReviewLogEntry: Identifiable, Codable, Equatable, Sendable {
     init(
         id: UUID = UUID(),
         wordId: UUID,
+        direction: PracticeDirection,
         result: ReviewResult,
         phase: ReviewPhase,
         statusBefore: WordStatus,
@@ -20,6 +22,7 @@ struct ReviewLogEntry: Identifiable, Codable, Equatable, Sendable {
     ) {
         self.id = id
         self.wordId = wordId
+        self.direction = direction
         self.result = result
         self.phase = phase
         self.statusBefore = statusBefore

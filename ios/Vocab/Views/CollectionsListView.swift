@@ -8,10 +8,13 @@ struct CollectionsListView: View {
     @State private var renameText = ""
 
     var body: some View {
+        // Computed once per render, not once per row — `recognizeStatusByWordId`
+        // rebuilds its dictionary from `wordStore.wordProgress` on every access.
+        let recognizeStatusByWordId = wordStore.recognizeStatusByWordId
         List {
             ForEach(collectionStore.collections) { collection in
                 NavigationLink(value: CollectionRoute(id: collection.id)) {
-                    CollectionRow(collection: collection, words: wordStore.words(in: collection.id))
+                    CollectionRow(collection: collection, words: wordStore.words(in: collection.id), recognizeStatusByWordId: recognizeStatusByWordId)
                 }
                 .swipeActions(edge: .leading) {
                     Button {
@@ -78,9 +81,10 @@ struct CollectionsListView: View {
 private struct CollectionRow: View {
     let collection: WordCollection
     let words: [Word]
+    let recognizeStatusByWordId: [UUID: WordStatus]
 
     private var learntCount: Int {
-        words.filter { $0.status == .learnt || $0.status == .retired }.count
+        words.filter { recognizeStatusByWordId[$0.id] == .learnt || recognizeStatusByWordId[$0.id] == .retired }.count
     }
 
     var body: some View {

@@ -131,6 +131,53 @@ final class AppDatabase: Sendable {
             }
         }
 
+        // Recall Layer (v2): progress moves off `local_words` into its own
+        // read mirror, `local_word_progress`, one row per (word, direction) —
+        // mirrors the server-side `word_progress` split. Keyed by a composite
+        // primary key (`wordId`, `direction`), not a standalone `id`: the
+        // client never inserts this table's rows itself (creation is
+        // server-side triggers), so `id` is opaque/server-assigned and not a
+        // safe local identity to upsert against — see `WordProgress`'s doc
+        // comment.
+        migrator.registerMigration("v3_word_progress") { db in
+            try db.create(table: "local_word_progress") { t in
+                t.column("id", .blob).notNull()
+                t.column("wordId", .blob).notNull().indexed()
+                t.column("direction", .text).notNull()
+                t.column("status", .text).notNull()
+                t.column("knowCount", .integer).notNull()
+                t.column("intervalStep", .integer).notNull()
+                t.column("dueAt", .datetime)
+                t.column("timesSeen", .integer).notNull()
+                t.column("updatedAt", .datetime).notNull()
+                t.primaryKey(["wordId", "direction"])
+            }
+
+            // Existing queued rows predate direction-scoped practice, so
+            // they're unambiguously `recognize` — the only direction that
+            // existed when they were enqueued.
+            try db.alter(table: "pending_reviews") { t in
+                t.add(column: "direction", .text).notNull().defaults(to: "recognize")
+            }
+
+            // `local_words` is a disposable read mirror (see v2's note) —
+            // drop and recreate without the columns that moved to
+            // `local_word_progress`, plus the new `recallUnlockedAt`.
+            try db.drop(table: "local_words")
+            try db.create(table: "local_words") { t in
+                t.column("id", .blob).primaryKey()
+                t.column("collectionId", .blob).notNull().indexed()
+                t.column("term", .text).notNull()
+                t.column("meanings", .text).notNull()
+                t.column("pronunciation", .text)
+                t.column("exampleSentence", .text)
+                t.column("importance", .integer).notNull()
+                t.column("recallUnlockedAt", .datetime)
+                t.column("createdAt", .datetime).notNull()
+                t.column("updatedAt", .datetime).notNull()
+            }
+        }
+
         return migrator
     }()
 }
@@ -185,6 +232,31 @@ extension AppDatabase {
 
     func deleteWord(_ id: UUID) throws {
         try dbQueue.write { db in _ = try Word.deleteOne(db, key: id) }
+    }
+
+    func replaceWordProgress(_ progress: [WordProgress]) throws {
+        try dbQueue.write { db in
+            try WordProgress.deleteAll(db)
+            for entry in progress { try entry.insert(db) }
+        }
+    }
+
+    func fetchWordProgress() throws -> [WordProgress] {
+        try dbQueue.read { db in try WordProgress.fetchAll(db) }
+    }
+
+    func upsertWordProgress(_ progress: WordProgress) throws {
+        try dbQueue.write { db in try progress.save(db) }
+    }
+
+    /// Local-only cascade, same reasoning as `deleteWords(forCollectionId:)`:
+    /// SQLite enforces no foreign key between the mirror tables, so a
+    /// deleted word's progress rows would otherwise survive as orphans in
+    /// the offline-read fallback.
+    func deleteWordProgress(forWordId wordId: UUID) throws {
+        try dbQueue.write { db in
+            try WordProgress.filter(Column("wordId") == wordId).deleteAll(db)
+        }
     }
 
     func replaceDailyActivity(_ activity: [DailyActivity]) throws {
@@ -254,6 +326,7 @@ extension AppDatabase {
         try dbQueue.write { db in
             try WordCollection.deleteAll(db)
             try Word.deleteAll(db)
+            try WordProgress.deleteAll(db)
             try DailyActivity.deleteAll(db)
             try PendingReview.deleteAll(db)
         }
@@ -266,6 +339,7 @@ extension WordStatus: DatabaseValueConvertible {}
 extension ReviewResult: DatabaseValueConvertible {}
 extension ReviewPhase: DatabaseValueConvertible {}
 extension SyncStatus: DatabaseValueConvertible {}
+extension PracticeDirection: DatabaseValueConvertible {}
 
 /// Stored as `CalendarDay.isoString` — the same plain `"yyyy-MM-dd"` text its
 /// `Codable` conformance already produces for Postgres — one format, two
@@ -287,6 +361,10 @@ extension WordCollection: FetchableRecord, PersistableRecord {
 
 extension Word: FetchableRecord, PersistableRecord {
     static let databaseTableName = "local_words"
+}
+
+extension WordProgress: FetchableRecord, PersistableRecord {
+    static let databaseTableName = "local_word_progress"
 }
 
 extension DailyActivity: FetchableRecord, PersistableRecord {

@@ -9,18 +9,18 @@ import Supabase
 @MainActor
 final class OutboxDrainTests: XCTestCase {
     private func makeOutcome(wordId: UUID = UUID(), reviewedAt: Date, activityDate: CalendarDay) -> ReviewScheduler.Outcome {
-        let word = Word(id: wordId, collectionId: UUID(), term: "t", translation: "t")
+        let progress = WordProgress(wordId: wordId, direction: .recognize, status: .learning)
         let log = ReviewLogEntry(
-            wordId: wordId, result: .know, phase: .active,
+            wordId: wordId, direction: .recognize, result: .know, phase: .active,
             statusBefore: .new, statusAfter: .learning, reviewedAt: reviewedAt
         )
-        return ReviewScheduler.Outcome(word: word, log: log, activityDate: activityDate)
+        return ReviewScheduler.Outcome(progress: progress, log: log, activityDate: activityDate)
     }
 
     func testDrainReplaysQueuedReviewsInClientReviewedAtOrderAndEmptiesTheOutbox() async {
         let database = AppDatabase.makeInMemory()
         let spy = ReviewSyncingSpy()
-        let store = WordStore(words: [], database: database, reviewSyncing: spy)
+        let store = WordStore(words: [], wordProgress: [], database: database, reviewSyncing: spy)
 
         let earlier = PendingReview(outcome: makeOutcome(reviewedAt: Date(timeIntervalSince1970: 1_000), activityDate: CalendarDay(date: Date())))
         let later = PendingReview(outcome: makeOutcome(reviewedAt: Date(timeIntervalSince1970: 2_000), activityDate: CalendarDay(date: Date())))
@@ -129,9 +129,10 @@ private final class MidDrainEnqueuingSyncing: ReviewSyncing, @unchecked Sendable
     func recordReview(_ review: PendingReview) async throws {
         if !hasEnqueuedSecondRow {
             hasEnqueuedSecondRow = true
+            let secondWordId = UUID()
             let second = PendingReview(outcome: ReviewScheduler.Outcome(
-                word: Word(collectionId: UUID(), term: "t2", translation: "t2"),
-                log: ReviewLogEntry(wordId: UUID(), result: .know, phase: .active, statusBefore: .new, statusAfter: .learning, reviewedAt: Date(timeIntervalSince1970: 2_000)),
+                progress: WordProgress(wordId: secondWordId, direction: .recognize, status: .learning),
+                log: ReviewLogEntry(wordId: secondWordId, direction: .recognize, result: .know, phase: .active, statusBefore: .new, statusAfter: .learning, reviewedAt: Date(timeIntervalSince1970: 2_000)),
                 activityDate: CalendarDay(date: Date())
             ))
             try? database.enqueuePendingReview(second)

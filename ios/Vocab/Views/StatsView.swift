@@ -13,9 +13,10 @@ struct StatsView: View {
 
     private var counts: WordCounts {
         let words = wordStore.words
-        let learntCount = words.filter { $0.status == .learnt || $0.status == .retired }.count
-        let learningCount = words.filter { $0.status == .learning }.count
-        let newCount = words.filter { $0.status == .new }.count
+        let statusByWordId = wordStore.recognizeStatusByWordId
+        let learntCount = words.filter { statusByWordId[$0.id] == .learnt || statusByWordId[$0.id] == .retired }.count
+        let learningCount = words.filter { statusByWordId[$0.id] == .learning }.count
+        let newCount = words.filter { statusByWordId[$0.id] == .new }.count
         return WordCounts(total: words.count, learnt: learntCount, learning: learningCount, new: newCount)
     }
 

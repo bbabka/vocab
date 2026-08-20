@@ -4,6 +4,7 @@ import Supabase
 @MainActor
 final class WordStore: ObservableObject {
     @Published private(set) var words: [Word]
+    @Published private(set) var wordProgress: [WordProgress]
     @Published var syncError: String?
 
     private let client: SupabaseClient
@@ -13,11 +14,13 @@ final class WordStore: ObservableObject {
 
     init(
         words: [Word] = MockData.words,
+        wordProgress: [WordProgress] = MockData.wordProgress,
         client: SupabaseClient = SupabaseClientProvider.shared,
         database: AppDatabase = .shared,
         reviewSyncing: ReviewSyncing = SupabaseReviewSyncing()
     ) {
         self.words = words
+        self.wordProgress = wordProgress
         self.client = client
         self.database = database
         self.reviewSyncing = reviewSyncing
@@ -29,17 +32,44 @@ final class WordStore: ObservableObject {
     /// this is what a Realtime `postgres_changes` row will also run through
     /// once Phase 5 wires it up. Falls back to the local mirror when the
     /// fetch itself fails (offline).
+    ///
+    /// Fetches `word_progress` alongside `words` — Recall Layer (v2) moved
+    /// all scheduling state there, so a word without its progress rows
+    /// isn't practiceable in either direction.
+    ///
+    /// The two fetches run in **independent** do/catch blocks, not one
+    /// shared block: an earlier version awaited them sequentially inside a
+    /// single `do`, so a failure fetching `word_progress` (e.g. the table
+    /// briefly not existing on the backend yet) threw before `words` was
+    /// ever reconciled from its already-successful fetch — discarding a
+    /// good result because of an unrelated failure, and falling all the way
+    /// back to the local cache for both. Keeping them independent means a
+    /// failure in one can't take down the other.
     func loadFromRemote() async {
+        let pending = (try? database.fetchPendingReviews()) ?? []
+
         do {
             let remote = try await WordAPI.fetchAll()
-            let pendingWordIds = Set((try? database.fetchPendingReviews().map(\.wordId)) ?? [])
+            let pendingWordIds = Set(pending.map(\.wordId))
             words = Self.reconcile(remote: remote, local: words, pendingWordIds: pendingWordIds)
             try? database.replaceWords(words)
         } catch {
-            if let cached = try? database.fetchWords() {
-                words = cached
+            if let cachedWords = try? database.fetchWords() {
+                words = cachedWords
             }
             syncError = error.localizedDescription
+        }
+
+        do {
+            let remoteProgress = try await WordProgressAPI.fetchAll()
+            let pendingProgressKeys = Set(pending.map { WordProgressKey(wordId: $0.wordId, direction: $0.direction) })
+            wordProgress = Self.reconcileProgress(remote: remoteProgress, local: wordProgress, pendingKeys: pendingProgressKeys)
+            try? database.replaceWordProgress(wordProgress)
+        } catch {
+            if let cachedProgress = try? database.fetchWordProgress() {
+                wordProgress = cachedProgress
+            }
+            syncError = [syncError, error.localizedDescription].compactMap { $0 }.joined(separator: "; ")
         }
     }
 
@@ -50,6 +80,16 @@ final class WordStore: ObservableObject {
     /// get clobbered by a stale-in-flight fetch.
     static func reconcile(remote: [Word], local: [Word], pendingWordIds: Set<UUID>) -> [Word] {
         Reconciler.merge(remote: remote, local: local, key: \.id, pendingKeys: pendingWordIds) { local, remote, isPending in
+            if isPending { return local }
+            return local.updatedAt > remote.updatedAt ? local : remote
+        }
+    }
+
+    /// Same shape as `reconcile`, keyed by `(wordId, direction)` rather than
+    /// a single id — that's `WordProgress`'s real identity from the
+    /// client's point of view (see its doc comment).
+    static func reconcileProgress(remote: [WordProgress], local: [WordProgress], pendingKeys: Set<WordProgressKey>) -> [WordProgress] {
+        Reconciler.merge(remote: remote, local: local, key: \.key, pendingKeys: pendingKeys) { local, remote, isPending in
             if isPending { return local }
             return local.updatedAt > remote.updatedAt ? local : remote
         }
@@ -72,7 +112,9 @@ final class WordStore: ObservableObject {
         case .delete(let delete):
             guard let id = delete.oldRecord["id"]?.stringValue.flatMap(UUID.init(uuidString:)) else { return }
             words = Self.applyingRealtimeDelete(id, from: words)
+            wordProgress.removeAll { $0.wordId == id }
             try? database.deleteWord(id)
+            try? database.deleteWordProgress(forWordId: id)
             // Mirrors `delete(_:)`: a queued review for a word deleted on
             // another device can never apply once it syncs.
             try? database.deletePendingReviews(forWordId: id)
@@ -84,6 +126,35 @@ final class WordStore: ObservableObject {
         guard let updated = Self.applyingRealtimeUpsert(remote, into: words, pendingWordIds: pendingWordIds) else { return }
         words = updated
         try? database.upsertWord(remote)
+    }
+
+    /// Applies one incoming `postgres_changes` row for `word_progress` —
+    /// same reconciliation rules as `applyRealtimeChange`, keyed by
+    /// `(wordId, direction)`. Fires for both the initial `recognize` row a
+    /// new word gets and the `recall` row the unlock trigger creates.
+    func applyRealtimeProgressChange(_ change: AnyAction) {
+        let pending = (try? database.fetchPendingReviews()) ?? []
+        let pendingKeys = Set(pending.map { WordProgressKey(wordId: $0.wordId, direction: $0.direction) })
+        switch change {
+        case .insert(let insert):
+            applyIncomingProgress(insert, pendingKeys: pendingKeys)
+        case .update(let update):
+            applyIncomingProgress(update, pendingKeys: pendingKeys)
+        case .delete(let delete):
+            guard let wordIdString = delete.oldRecord["word_id"]?.stringValue,
+                  let wordId = UUID(uuidString: wordIdString),
+                  let directionString = delete.oldRecord["direction"]?.stringValue,
+                  let direction = PracticeDirection(rawValue: directionString) else { return }
+            let key = WordProgressKey(wordId: wordId, direction: direction)
+            wordProgress = Self.applyingRealtimeProgressDelete(key, from: wordProgress)
+        }
+    }
+
+    private func applyIncomingProgress(_ action: some HasRecord, pendingKeys: Set<WordProgressKey>) {
+        guard let remote = try? action.decodeRecord(as: WordProgress.self, decoder: SupabaseClientProvider.payloadDecoder) else { return }
+        guard let updated = Self.applyingRealtimeProgressUpsert(remote, into: wordProgress, pendingKeys: pendingKeys) else { return }
+        wordProgress = updated
+        try? database.upsertWordProgress(remote)
     }
 
     /// Same pending/last-write-wins rules as `reconcile`, but as an upsert
@@ -108,12 +179,35 @@ final class WordStore: ObservableObject {
         words.filter { $0.id != id }
     }
 
+    static func applyingRealtimeProgressUpsert(_ remote: WordProgress, into progress: [WordProgress], pendingKeys: Set<WordProgressKey>) -> [WordProgress]? {
+        guard !pendingKeys.contains(remote.key) else { return nil }
+        guard let index = progress.firstIndex(where: { $0.key == remote.key }) else {
+            return progress + [remote]
+        }
+        guard remote.updatedAt >= progress[index].updatedAt else { return nil }
+        var updated = progress
+        updated[index] = remote
+        return updated
+    }
+
+    static func applyingRealtimeProgressDelete(_ key: WordProgressKey, from progress: [WordProgress]) -> [WordProgress] {
+        progress.filter { $0.key != key }
+    }
+
     func words(in collectionId: UUID) -> [Word] {
         words.filter { $0.collectionId == collectionId }
     }
 
     func word(_ id: UUID) -> Word? {
         words.first { $0.id == id }
+    }
+
+    /// The "headline" progress views read for library filters, stats counts,
+    /// and status badges — see the brief's "What 'learnt' means at the word
+    /// level". `nil` only in the brief window before a word's progress rows
+    /// have synced (see `add(_:)`'s optimistic-append comment).
+    func recognizeProgress(for wordId: UUID) -> WordProgress? {
+        progress(for: wordId, direction: .recognize)
     }
 
     /// Clears in-memory state on sign-out (see `CollectionStore.reset()` for
@@ -123,6 +217,7 @@ final class WordStore: ObservableObject {
     /// lose, and `AppDatabase.wipe()` handles clearing the mirror itself.
     func reset() {
         words = []
+        wordProgress = []
         syncError = nil
     }
 
@@ -131,14 +226,25 @@ final class WordStore: ObservableObject {
     /// (unlike a practice swipe, there's no "instant feedback during a fast
     /// session" pressure here). Adding a word is not covered by the offline
     /// outbox (that's swipes only) — it still requires connectivity.
+    ///
+    /// Also optimistically appends the `recognize` progress row a DB trigger
+    /// creates server-side on insert, so the word is immediately
+    /// practiceable without waiting on a fetch/realtime round-trip. The
+    /// server assigns its own `id` for that row; the optimistic copy here
+    /// only needs to match on `(wordId, direction)` for later reconciliation
+    /// to replace it correctly (see `WordProgress`'s doc comment).
     func add(_ word: Word) {
         words.append(word)
+        let initialProgress = WordProgress(wordId: word.id, direction: .recognize, updatedAt: word.updatedAt)
+        wordProgress.append(initialProgress)
         Task {
             do {
                 try await WordAPI.insert(word)
                 try? database.upsertWord(word)
+                try? database.upsertWordProgress(initialProgress)
             } catch {
                 words.removeAll { $0.id == word.id }
+                wordProgress.removeAll { $0.wordId == word.id }
                 syncError = error.localizedDescription
             }
         }
@@ -174,37 +280,56 @@ final class WordStore: ObservableObject {
     func delete(_ wordId: UUID) {
         guard let index = words.firstIndex(where: { $0.id == wordId }) else { return }
         let removed = words.remove(at: index)
+        let removedProgress = wordProgress.filter { $0.wordId == wordId }
+        wordProgress.removeAll { $0.wordId == wordId }
         Task {
             do {
                 try await WordAPI.delete(wordId)
                 try? database.deleteWord(wordId)
+                try? database.deleteWordProgress(forWordId: wordId)
                 // A queued review for this word can never apply once it's
                 // gone — drop it rather than let drainOutbox() keep hitting
                 // record_review's "word not found" error on every retry.
                 try? database.deletePendingReviews(forWordId: wordId)
             } catch {
                 words.insert(removed, at: min(index, words.count))
+                wordProgress.append(contentsOf: removedProgress)
                 syncError = error.localizedDescription
             }
         }
     }
 
     /// Assembles a practice batch from the current in-memory word set for
-    /// `collectionIds`, or across all collections when `collectionIds` is
-    /// nil or empty (the brief's "All" option).
-    func assembleBatch(collectionIds: Set<UUID>?, batchSize: Int, now: Date = Date()) -> [Word] {
+    /// `collectionIds` and `direction`, or across all collections when
+    /// `collectionIds` is nil or empty (the brief's "All" option).
+    func assembleBatch(collectionIds: Set<UUID>?, direction: PracticeDirection, batchSize: Int, now: Date = Date()) -> [PracticeCard] {
         let pool = pool(for: collectionIds)
-        return ReviewScheduler.assembleBatch(from: pool, batchSize: batchSize, now: now)
+        return ReviewScheduler.assembleBatch(from: pool, progress: progressPool(for: pool), direction: direction, batchSize: batchSize, now: now)
     }
 
-    func isFullyRetired(collectionIds: Set<UUID>?, now: Date = Date()) -> Bool {
+    func isFullyRetired(collectionIds: Set<UUID>?, direction: PracticeDirection, now: Date = Date()) -> Bool {
         let pool = pool(for: collectionIds)
-        return ReviewScheduler.isFullyRetired(pool, now: now)
+        return ReviewScheduler.isFullyRetired(progressPool(for: pool), direction: direction, now: now)
     }
 
     private func pool(for collectionIds: Set<UUID>?) -> [Word] {
         guard let collectionIds, !collectionIds.isEmpty else { return words }
         return words.filter { collectionIds.contains($0.collectionId) }
+    }
+
+    private func progressPool(for words: [Word]) -> [WordProgress] {
+        let wordIds = Set(words.map(\.id))
+        return wordProgress.filter { wordIds.contains($0.wordId) }
+    }
+
+    /// The "headline" status views read for library filters, stats counts,
+    /// and status badges — see the brief's "What 'learnt' means at the word
+    /// level". A single shared source instead of each view rebuilding its
+    /// own `wordId → status` dictionary from `wordProgress`.
+    var recognizeStatusByWordId: [UUID: WordStatus] {
+        Dictionary(uniqueKeysWithValues: wordProgress
+            .filter { $0.direction == .recognize }
+            .map { ($0.wordId, $0.status) })
     }
 
     /// Applies one swipe: runs the pure `ReviewScheduler`, writes the
@@ -223,23 +348,32 @@ final class WordStore: ObservableObject {
     /// rolls back on a sync failure — matching the brief's "register
     /// instantly and sync in the background."
     @discardableResult
-    func applySwipe(_ swipe: ReviewResult, to wordId: UUID, now: Date = Date()) -> ReviewScheduler.Outcome? {
-        guard let word = word(wordId) else { return nil }
-        let outcome = ReviewScheduler.apply(swipe, to: word, now: now)
-        update(outcome.word)
+    func applySwipe(_ swipe: ReviewResult, to wordId: UUID, direction: PracticeDirection, now: Date = Date()) -> ReviewScheduler.Outcome? {
+        guard let entry = progress(for: wordId, direction: direction) else { return nil }
+        let outcome = ReviewScheduler.apply(swipe, to: entry, now: now)
+        updateProgress(outcome.progress)
         // Explicit do/catch, not `try?`: if the local GRDB write itself
         // fails (disk full, migration mismatch), the swipe would otherwise
         // be lost silently — never queued, never synced, no trace anywhere.
         // Surfacing it via `syncError` is the best we can do for a failure
         // this deep in the local storage layer.
         do {
-            try database.upsertWord(outcome.word)
+            try database.upsertWordProgress(outcome.progress)
             try database.enqueuePendingReview(PendingReview(outcome: outcome))
         } catch {
             syncError = error.localizedDescription
         }
         Task { await drainOutbox() }
         return outcome
+    }
+
+    private func progress(for wordId: UUID, direction: PracticeDirection) -> WordProgress? {
+        wordProgress.first { $0.wordId == wordId && $0.direction == direction }
+    }
+
+    private func updateProgress(_ entry: WordProgress) {
+        guard let index = wordProgress.firstIndex(where: { $0.key == entry.key }) else { return }
+        wordProgress[index] = entry
     }
 
     /// Replays queued swipes strictly in `clientReviewedAt` order, one at a
@@ -285,35 +419,46 @@ final class WordStore: ObservableObject {
         }
     }
 
-    /// Manual override from Word Detail: force a status, resetting the
-    /// scheduling fields to sensible defaults for that status per the brief.
+    /// Manual override from Word Detail: force `recognize`'s status,
+    /// resetting the scheduling fields to sensible defaults for that status
+    /// per the brief. Always targets `recognize`, never `recall` — the
+    /// brief treats `recognize` as the word's "headline" state, which is
+    /// what a status override in Word Detail colloquially means.
+    ///
+    /// Writes through `WordProgressAPI.update`, not `record_review` — a
+    /// second legitimate write path onto `word_progress`, deliberately not
+    /// funneled through the RPC. The DB-side unlock trigger fires on
+    /// `word_progress` itself regardless of which path wrote to it, so a
+    /// word manually forced to `learnt` here still unlocks `recall`
+    /// correctly (see the `word_progress_unlock_recall` migration).
     func setStatus(_ status: WordStatus, for wordId: UUID, now: Date = Date()) {
-        guard var word = word(wordId) else { return }
-        let previous = word
+        let direction = PracticeDirection.recognize
+        guard var entry = progress(for: wordId, direction: direction) else { return }
+        let previous = entry
         switch status {
         case .new:
-            word.knowCount = 0
-            word.intervalStep = 0
-            word.dueAt = nil
+            entry.knowCount = 0
+            entry.intervalStep = 0
+            entry.dueAt = nil
         case .learning:
-            word.knowCount = 0
-            word.intervalStep = 0
-            word.dueAt = nil
+            entry.knowCount = 0
+            entry.intervalStep = 0
+            entry.dueAt = nil
         case .learnt:
-            word.intervalStep = 0
-            word.dueAt = now.addingTimeInterval(TimeInterval(SchedulingConstants.resurfaceLadderDays[0]) * 86400)
+            entry.intervalStep = 0
+            entry.dueAt = now.addingTimeInterval(TimeInterval(SchedulingConstants.resurfaceLadderDays[0]) * 86400)
         case .retired:
-            word.dueAt = nil
+            entry.dueAt = nil
         }
-        word.status = status
-        word.updatedAt = now
-        update(word)
+        entry.status = status
+        entry.updatedAt = now
+        updateProgress(entry)
         Task {
             do {
-                try await WordAPI.update(word)
-                try? database.upsertWord(word)
+                try await WordProgressAPI.update(entry)
+                try? database.upsertWordProgress(entry)
             } catch {
-                update(previous)
+                updateProgress(previous)
                 syncError = error.localizedDescription
             }
         }
