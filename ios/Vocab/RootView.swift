@@ -9,9 +9,17 @@ struct RootView: View {
     @StateObject private var realtimeService = RealtimeService()
     @Environment(\.scenePhase) private var scenePhase
 
+    /// True once the post-sign-in initial load (`loadInitialData()`) has
+    /// completed. Every store starts seeded with `MockData` (see each
+    /// store's `init`) so previews/tests have something to render — without
+    /// this gate, `mainTabs` would mount immediately on sign-in and every
+    /// tab would flash that placeholder data for the moment it takes the
+    /// real fetch to land.
+    @State private var hasLoadedInitialData = false
+
     var body: some View {
         Group {
-            if authStore.isInitializing {
+            if authStore.isInitializing || (authStore.session != nil && !hasLoadedInitialData) {
                 SplashView()
             } else if authStore.session != nil {
                 mainTabs
@@ -21,6 +29,20 @@ struct RootView: View {
         }
         .task {
             await authStore.observeAuthState()
+        }
+        // Keyed on the signed-in user's id, not just "is there a session":
+        // restarts this load if a different account signs in, and — unlike
+        // attaching it to `mainTabs` itself — runs independently of whether
+        // `mainTabs` is currently mounted, so it can be the thing that
+        // decides when `mainTabs` is allowed to mount in the first place.
+        .task(id: authStore.session?.user.id) {
+            guard authStore.session != nil else { return }
+            await loadInitialData()
+            // Initial subscribe on first appearance after sign-in; the
+            // scenePhase handler below takes over for subsequent
+            // background/foreground transitions during this same session.
+            realtimeService.start(collectionStore: collectionStore, wordStore: wordStore, reviewStore: reviewStore)
+            hasLoadedInitialData = true
         }
         .onChange(of: authStore.session == nil) { _, isSignedOut in
             // The stores are long-lived `@StateObject`s that outlive any
@@ -33,6 +55,7 @@ struct RootView: View {
                 collectionStore.reset()
                 wordStore.reset()
                 reviewStore.reset()
+                hasLoadedInitialData = false
                 Task { await realtimeService.stop() }
             }
         }
@@ -77,28 +100,21 @@ struct RootView: View {
             .tabItem { Label("Settings", systemImage: "gearshape") }
         }
         .task {
-            // No-op in Phase 1 (mock data); becomes real once Phase 3 wires
-            // Supabase-backed stores. Kept here now so this wiring never
-            // needs to change shape later, matching Reader's RootView.
-            async let collections: () = collectionStore.loadFromRemote()
-            async let wordsLoad: () = wordStore.loadFromRemote()
-            async let reviews: () = reviewStore.loadFromRemote()
-            _ = await (collections, wordsLoad, reviews)
-
-            // Outbox drain trigger #1 (launch); trigger #2 is reconnect,
-            // wired below via `connectivityMonitor.start`.
-            await drainAndRefreshActivity()
-
-            // Initial subscribe on first appearance after sign-in; the
-            // scenePhase handler above takes over for subsequent
-            // background/foreground transitions during this same session.
-            realtimeService.start(collectionStore: collectionStore, wordStore: wordStore, reviewStore: reviewStore)
-        }
-        .task {
             connectivityMonitor.start {
                 Task { await drainAndRefreshActivity() }
             }
         }
+    }
+
+    private func loadInitialData() async {
+        async let collections: () = collectionStore.loadFromRemote()
+        async let wordsLoad: () = wordStore.loadFromRemote()
+        async let reviews: () = reviewStore.loadFromRemote()
+        _ = await (collections, wordsLoad, reviews)
+
+        // Outbox drain trigger #1 (launch); trigger #2 is reconnect, wired
+        // in `mainTabs` via `connectivityMonitor.start`.
+        await drainAndRefreshActivity()
     }
 
     /// Drains the outbox, then re-fetches `dailyActivity` so a swipe that
