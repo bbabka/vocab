@@ -48,15 +48,27 @@ final class WordStore: ObservableObject {
     func loadFromRemote() async {
         let pending = (try? database.fetchPendingReviews()) ?? []
 
+        // Loaded unconditionally, before either fetch: on a cold launch,
+        // `words`/`wordProgress` are still each store's placeholder
+        // `MockData` default (see `init`), not this device's real last-known
+        // state. Reconciling straight against that placeholder means no key
+        // ever matches a real row, so the pending-outbox protection below
+        // never engages and a fresh remote fetch clobbers any not-yet-synced
+        // local progress outright. Seeding from the GRDB mirror first makes
+        // `local` the real previous state before reconciliation runs.
+        if let cachedWords = try? database.fetchWords() {
+            words = cachedWords
+        }
+        if let cachedProgress = try? database.fetchWordProgress() {
+            wordProgress = cachedProgress
+        }
+
         do {
             let remote = try await WordAPI.fetchAll()
             let pendingWordIds = Set(pending.map(\.wordId))
             words = Self.reconcile(remote: remote, local: words, pendingWordIds: pendingWordIds)
             try? database.replaceWords(words)
         } catch {
-            if let cachedWords = try? database.fetchWords() {
-                words = cachedWords
-            }
             syncError = error.localizedDescription
         }
 
@@ -66,9 +78,6 @@ final class WordStore: ObservableObject {
             wordProgress = Self.reconcileProgress(remote: remoteProgress, local: wordProgress, pendingKeys: pendingProgressKeys)
             try? database.replaceWordProgress(wordProgress)
         } catch {
-            if let cachedProgress = try? database.fetchWordProgress() {
-                wordProgress = cachedProgress
-            }
             syncError = [syncError, error.localizedDescription].compactMap { $0 }.joined(separator: "; ")
         }
     }

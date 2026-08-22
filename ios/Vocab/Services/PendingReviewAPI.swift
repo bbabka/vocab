@@ -34,6 +34,39 @@ enum PendingReviewAPI {
         let pTimesSeenAfter: Int
         let pReviewedAt: Date
         let pActivityDate: CalendarDay
+
+        /// `pDueAtAfter` is `nil` for every word still `new`/`learning` —
+        /// the common case, since `dueAt` is only set once a word reaches
+        /// `learnt`. Synthesized `Encodable` would omit a `nil` Optional's
+        /// key entirely rather than write `null`, but `record_review`'s
+        /// `p_due_at_after` parameter has no SQL default, so PostgREST can't
+        /// resolve the function when the key is missing — every such call
+        /// fails with a schema-cache error, not the `VC001` this module
+        /// specifically watches for, which silently jams the whole outbox
+        /// (see `WordStore.drainOutbox`). Encoding explicitly keeps the key
+        /// present (as `null`) so the call always matches.
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(pId, forKey: .pId)
+            try container.encode(pWordId, forKey: .pWordId)
+            try container.encode(pDirection, forKey: .pDirection)
+            try container.encode(pResult, forKey: .pResult)
+            try container.encode(pPhase, forKey: .pPhase)
+            try container.encode(pStatusBefore, forKey: .pStatusBefore)
+            try container.encode(pStatusAfter, forKey: .pStatusAfter)
+            try container.encode(pKnowCountAfter, forKey: .pKnowCountAfter)
+            try container.encode(pIntervalStepAfter, forKey: .pIntervalStepAfter)
+            try container.encode(pDueAtAfter, forKey: .pDueAtAfter)
+            try container.encode(pTimesSeenAfter, forKey: .pTimesSeenAfter)
+            try container.encode(pReviewedAt, forKey: .pReviewedAt)
+            try container.encode(pActivityDate, forKey: .pActivityDate)
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case pId, pWordId, pDirection, pResult, pPhase, pStatusBefore, pStatusAfter
+            case pKnowCountAfter, pIntervalStepAfter, pDueAtAfter, pTimesSeenAfter
+            case pReviewedAt, pActivityDate
+        }
     }
 
     static func recordReview(_ review: PendingReview) async throws {
