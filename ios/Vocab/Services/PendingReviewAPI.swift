@@ -20,6 +20,27 @@ struct SupabaseReviewSyncing: ReviewSyncing {
 /// if that id already exists, so a retry after a crash mid-drain can't
 /// double-apply a swipe.
 enum PendingReviewAPI {
+    /// Always encodes its wrapped value as the key's value, even when `nil`
+    /// (writing JSON `null`), rather than omitting the key the way
+    /// synthesized `Encodable` does for a plain `Optional`. Isolates that
+    /// workaround to just the one field that needs it — see `Params`'s
+    /// `pDueAtAfter` — instead of hand-rolling `Encodable` for the whole
+    /// struct.
+    private struct AlwaysEncoded<Wrapped: Encodable>: Encodable {
+        let value: Wrapped?
+
+        init(_ value: Wrapped?) { self.value = value }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            if let value {
+                try container.encode(value)
+            } else {
+                try container.encodeNil()
+            }
+        }
+    }
+
     private struct Params: Encodable {
         let pId: UUID
         let pWordId: UUID
@@ -30,43 +51,19 @@ enum PendingReviewAPI {
         let pStatusAfter: WordStatus
         let pKnowCountAfter: Int
         let pIntervalStepAfter: Int
-        let pDueAtAfter: Date?
+        /// `nil` for every word still `new`/`learning` — the common case,
+        /// since `dueAt` is only set once a word reaches `learnt`. Wrapped
+        /// in `AlwaysEncoded` because `record_review`'s `p_due_at_after`
+        /// parameter has no SQL default, so PostgREST can't resolve the
+        /// function when a synthesized `Encodable` would omit this key
+        /// entirely for `nil` — every such call would fail with a
+        /// schema-cache error, not the `VC001` this module specifically
+        /// watches for, which would silently jam the whole outbox (see
+        /// `WordStore.drainOutbox`).
+        let pDueAtAfter: AlwaysEncoded<Date>
         let pTimesSeenAfter: Int
         let pReviewedAt: Date
         let pActivityDate: CalendarDay
-
-        /// `pDueAtAfter` is `nil` for every word still `new`/`learning` —
-        /// the common case, since `dueAt` is only set once a word reaches
-        /// `learnt`. Synthesized `Encodable` would omit a `nil` Optional's
-        /// key entirely rather than write `null`, but `record_review`'s
-        /// `p_due_at_after` parameter has no SQL default, so PostgREST can't
-        /// resolve the function when the key is missing — every such call
-        /// fails with a schema-cache error, not the `VC001` this module
-        /// specifically watches for, which silently jams the whole outbox
-        /// (see `WordStore.drainOutbox`). Encoding explicitly keeps the key
-        /// present (as `null`) so the call always matches.
-        func encode(to encoder: Encoder) throws {
-            var container = encoder.container(keyedBy: CodingKeys.self)
-            try container.encode(pId, forKey: .pId)
-            try container.encode(pWordId, forKey: .pWordId)
-            try container.encode(pDirection, forKey: .pDirection)
-            try container.encode(pResult, forKey: .pResult)
-            try container.encode(pPhase, forKey: .pPhase)
-            try container.encode(pStatusBefore, forKey: .pStatusBefore)
-            try container.encode(pStatusAfter, forKey: .pStatusAfter)
-            try container.encode(pKnowCountAfter, forKey: .pKnowCountAfter)
-            try container.encode(pIntervalStepAfter, forKey: .pIntervalStepAfter)
-            try container.encode(pDueAtAfter, forKey: .pDueAtAfter)
-            try container.encode(pTimesSeenAfter, forKey: .pTimesSeenAfter)
-            try container.encode(pReviewedAt, forKey: .pReviewedAt)
-            try container.encode(pActivityDate, forKey: .pActivityDate)
-        }
-
-        private enum CodingKeys: String, CodingKey {
-            case pId, pWordId, pDirection, pResult, pPhase, pStatusBefore, pStatusAfter
-            case pKnowCountAfter, pIntervalStepAfter, pDueAtAfter, pTimesSeenAfter
-            case pReviewedAt, pActivityDate
-        }
     }
 
     static func recordReview(_ review: PendingReview) async throws {
@@ -80,7 +77,7 @@ enum PendingReviewAPI {
             pStatusAfter: review.statusAfter,
             pKnowCountAfter: review.knowCountAfter,
             pIntervalStepAfter: review.intervalStepAfter,
-            pDueAtAfter: review.dueAtAfter,
+            pDueAtAfter: AlwaysEncoded(review.dueAtAfter),
             pTimesSeenAfter: review.timesSeenAfter,
             pReviewedAt: review.clientReviewedAt,
             pActivityDate: review.activityDate

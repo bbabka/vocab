@@ -205,13 +205,18 @@ extension AppDatabase {
     }
 
     /// Local-only cascade: SQLite enforces no foreign key between
-    /// `local_collections` and `local_words` (they're independent mirror
-    /// tables), so deleting a collection must explicitly purge its words
-    /// too — otherwise they'd survive in the offline-read fallback as
-    /// orphans referencing a collection that's gone everywhere else.
+    /// `local_collections`, `local_words`, and `local_word_progress` (all
+    /// independent mirror tables), so deleting a collection must explicitly
+    /// purge its words *and* their progress rows too — otherwise they'd
+    /// survive in the offline-read fallback as orphans referencing a
+    /// collection that's gone everywhere else. Both deletes run in the same
+    /// write transaction so the word ids are still available to scope the
+    /// progress delete before the words themselves are gone.
     func deleteWords(forCollectionId collectionId: UUID) throws {
         try dbQueue.write { db in
-            try Word.filter(Column("collectionId") == collectionId).deleteAll(db)
+            let wordIds = try Word.filter(Column("collectionId") == collectionId).fetchAll(db).map(\.id)
+            try WordProgress.filter(wordIds.contains(Column("wordId"))).deleteAll(db)
+            _ = try Word.filter(Column("collectionId") == collectionId).deleteAll(db)
         }
     }
 
@@ -255,7 +260,7 @@ extension AppDatabase {
     /// the offline-read fallback.
     func deleteWordProgress(forWordId wordId: UUID) throws {
         try dbQueue.write { db in
-            try WordProgress.filter(Column("wordId") == wordId).deleteAll(db)
+            _ = try WordProgress.filter(Column("wordId") == wordId).deleteAll(db)
         }
     }
 
@@ -301,7 +306,7 @@ extension AppDatabase {
     /// the "word not found" error on every future attempt.
     func deletePendingReviews(forWordId wordId: UUID) throws {
         try dbQueue.write { db in
-            try PendingReview.filter(Column("wordId") == wordId).deleteAll(db)
+            _ = try PendingReview.filter(Column("wordId") == wordId).deleteAll(db)
         }
     }
 
@@ -328,7 +333,7 @@ extension AppDatabase {
             try Word.deleteAll(db)
             try WordProgress.deleteAll(db)
             try DailyActivity.deleteAll(db)
-            try PendingReview.deleteAll(db)
+            _ = try PendingReview.deleteAll(db)
         }
     }
 }

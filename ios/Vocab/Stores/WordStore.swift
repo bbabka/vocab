@@ -45,6 +45,12 @@ final class WordStore: ObservableObject {
     /// good result because of an unrelated failure, and falling all the way
     /// back to the local cache for both. Keeping them independent means a
     /// failure in one can't take down the other.
+    ///
+    /// Both requests are kicked off together via `async let` (matching
+    /// `ReviewStore.loadFromRemote`'s pattern) so this costs one round
+    /// trip's worth of latency, not two back-to-back — `async let` starts
+    /// the child task at the point it's declared, and awaiting each inside
+    /// its own `do` preserves the independent-failure behavior above.
     func loadFromRemote() async {
         let pending = (try? database.fetchPendingReviews()) ?? []
 
@@ -63,8 +69,11 @@ final class WordStore: ObservableObject {
             wordProgress = cachedProgress
         }
 
+        async let remoteWords = WordAPI.fetchAll()
+        async let remoteProgress = WordProgressAPI.fetchAll()
+
         do {
-            let remote = try await WordAPI.fetchAll()
+            let remote = try await remoteWords
             let pendingWordIds = Set(pending.map(\.wordId))
             words = Self.reconcile(remote: remote, local: words, pendingWordIds: pendingWordIds)
             try? database.replaceWords(words)
@@ -73,9 +82,9 @@ final class WordStore: ObservableObject {
         }
 
         do {
-            let remoteProgress = try await WordProgressAPI.fetchAll()
+            let remote = try await remoteProgress
             let pendingProgressKeys = Set(pending.map { WordProgressKey(wordId: $0.wordId, direction: $0.direction) })
-            wordProgress = Self.reconcileProgress(remote: remoteProgress, local: wordProgress, pendingKeys: pendingProgressKeys)
+            wordProgress = Self.reconcileProgress(remote: remote, local: wordProgress, pendingKeys: pendingProgressKeys)
             try? database.replaceWordProgress(wordProgress)
         } catch {
             syncError = [syncError, error.localizedDescription].compactMap { $0 }.joined(separator: "; ")
@@ -167,21 +176,13 @@ final class WordStore: ObservableObject {
     }
 
     /// Same pending/last-write-wins rules as `reconcile`, but as an upsert
-    /// into the existing array rather than a wholesale replace — a single
-    /// incoming row must not drop every other word not present in this one
-    /// remote row, which is what `Reconciler.merge` would do if handed a
-    /// one-element `remote` array. Returns `nil` when the incoming row
+    /// into the existing array rather than a wholesale replace — see
+    /// `Reconciler.upsertOne` for why `Reconciler.merge` isn't reusable
+    /// as-is for a single incoming row. Returns `nil` when the incoming row
     /// shouldn't change local state (pending outbox entry, or a stale/
     /// out-of-order row older than what's already there).
     static func applyingRealtimeUpsert(_ remote: Word, into words: [Word], pendingWordIds: Set<UUID>) -> [Word]? {
-        guard !pendingWordIds.contains(remote.id) else { return nil }
-        guard let index = words.firstIndex(where: { $0.id == remote.id }) else {
-            return words + [remote]
-        }
-        guard remote.updatedAt >= words[index].updatedAt else { return nil }
-        var updated = words
-        updated[index] = remote
-        return updated
+        Reconciler.upsertOne(remote, into: words, key: \.id, pendingKeys: pendingWordIds, updatedAt: \.updatedAt)
     }
 
     static func applyingRealtimeDelete(_ id: UUID, from words: [Word]) -> [Word] {
@@ -189,14 +190,7 @@ final class WordStore: ObservableObject {
     }
 
     static func applyingRealtimeProgressUpsert(_ remote: WordProgress, into progress: [WordProgress], pendingKeys: Set<WordProgressKey>) -> [WordProgress]? {
-        guard !pendingKeys.contains(remote.key) else { return nil }
-        guard let index = progress.firstIndex(where: { $0.key == remote.key }) else {
-            return progress + [remote]
-        }
-        guard remote.updatedAt >= progress[index].updatedAt else { return nil }
-        var updated = progress
-        updated[index] = remote
-        return updated
+        Reconciler.upsertOne(remote, into: progress, key: \.key, pendingKeys: pendingKeys, updatedAt: \.updatedAt)
     }
 
     static func applyingRealtimeProgressDelete(_ key: WordProgressKey, from progress: [WordProgress]) -> [WordProgress] {
@@ -318,7 +312,7 @@ final class WordStore: ObservableObject {
 
     func isFullyRetired(collectionIds: Set<UUID>?, direction: PracticeDirection, now: Date = Date()) -> Bool {
         let pool = pool(for: collectionIds)
-        return ReviewScheduler.isFullyRetired(progressPool(for: pool), direction: direction, now: now)
+        return ReviewScheduler.isFullyRetired(progressPool(for: pool), words: pool, direction: direction, now: now)
     }
 
     private func pool(for collectionIds: Set<UUID>?) -> [Word] {
@@ -358,7 +352,13 @@ final class WordStore: ObservableObject {
     /// instantly and sync in the background."
     @discardableResult
     func applySwipe(_ swipe: ReviewResult, to wordId: UUID, direction: PracticeDirection, now: Date = Date()) -> ReviewScheduler.Outcome? {
-        guard let entry = progress(for: wordId, direction: direction) else { return nil }
+        // `entry.status != .retired` guards against `ReviewScheduler.apply`'s
+        // precondition: the same card can be committed twice in quick
+        // succession (a fast double-swipe/double-skip before the UI catches
+        // up), or a Realtime update from another device can retire this
+        // word between batch assembly and this swipe landing. Either way,
+        // there's nothing sensible left to apply — no-op rather than crash.
+        guard let entry = progress(for: wordId, direction: direction), entry.status != .retired else { return nil }
         let outcome = ReviewScheduler.apply(swipe, to: entry, now: now)
         updateProgress(outcome.progress)
         // Explicit do/catch, not `try?`: if the local GRDB write itself

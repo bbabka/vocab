@@ -33,6 +33,15 @@ struct PracticeCard: Identifiable, Equatable, Sendable {
 /// per-direction scheduling state) rather than `Word` directly. The phase
 /// math is unchanged — only the type it reads/writes moved.
 enum ReviewScheduler {
+    /// What "has content to show" means for a given practice direction —
+    /// shared between `assembleBatch` (which must not surface a card it
+    /// can't render) and `isFullyRetired` (which must agree with
+    /// `assembleBatch` about what counts as "still has work"), so the two
+    /// can never silently drift apart on this rule again.
+    private static func isContentReady(_ word: Word, for direction: PracticeDirection) -> Bool {
+        direction == .recognize || !word.meanings.isEmpty
+    }
+
     struct Outcome {
         var progress: WordProgress
         var log: ReviewLogEntry
@@ -148,7 +157,7 @@ enum ReviewScheduler {
         let wordsById = Dictionary(uniqueKeysWithValues: words.map { ($0.id, $0) })
         let eligible = progress.filter { entry in
             guard entry.direction == direction, let word = wordsById[entry.wordId] else { return false }
-            return direction == .recognize || !word.meanings.isEmpty
+            return isContentReady(word, for: direction)
         }
 
         func word(for entry: WordProgress) -> Word { wordsById[entry.wordId]! }
@@ -184,8 +193,19 @@ enum ReviewScheduler {
     /// some `learnt` rows simply aren't due yet; the brief specifies this
     /// condition (nothing due + active deck empty), not a stricter check
     /// that every row has reached terminal `retired` status.
-    static func isFullyRetired(_ progress: [WordProgress], direction: PracticeDirection, now: Date = Date()) -> Bool {
-        let inDirection = progress.filter { $0.direction == direction }
+    ///
+    /// Takes `words` and applies the same `isContentReady` filter
+    /// `assembleBatch` does: a progress row `assembleBatch` would never
+    /// actually surface as a card (e.g. a recall-unlocked word with no
+    /// meanings yet) must not count as "still has active work" here either,
+    /// or the two would disagree about whether there's anything left to
+    /// review.
+    static func isFullyRetired(_ progress: [WordProgress], words: [Word], direction: PracticeDirection, now: Date = Date()) -> Bool {
+        let wordsById = Dictionary(uniqueKeysWithValues: words.map { ($0.id, $0) })
+        let inDirection = progress.filter { entry in
+            guard entry.direction == direction, let word = wordsById[entry.wordId] else { return false }
+            return isContentReady(word, for: direction)
+        }
         let hasDue = inDirection.contains { $0.status == .learnt && ($0.dueAt ?? .distantFuture) <= now }
         let hasActive = inDirection.contains { $0.status == .new || $0.status == .learning }
         return !hasDue && !hasActive

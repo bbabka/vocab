@@ -2,10 +2,25 @@ import Foundation
 import Supabase
 
 enum SupabaseClientProvider {
+    /// `emitLocalSessionAsInitialSession: true` opts in now to
+    /// supabase-swift's post-v2.53 default (see
+    /// https://github.com/supabase/supabase-swift/pull/822): the locally
+    /// stored session is emitted as `authStateChanges`'s first event right
+    /// away, rather than only after a network round trip to refresh it.
+    /// `AuthStore.observeAuthState()` deliberately does *not* special-case
+    /// an expired initial session — every request already re-validates
+    /// its own token via the SDK's per-request refresh, and every fetch in
+    /// this app already falls back to the local GRDB mirror on failure (see
+    /// `WordStore`/`CollectionStore`/`ReviewStore`'s `loadFromRemote()`), so
+    /// a stale cached session degrades the same way an offline launch
+    /// already does, rather than needing its own guard.
     static let shared = SupabaseClient(
         supabaseURL: SupabaseConfig.url,
         supabaseKey: SupabaseConfig.anonKey,
-        options: SupabaseClientOptions(db: .init(encoder: postgrestEncoder, decoder: postgrestDecoder))
+        options: SupabaseClientOptions(
+            db: .init(encoder: postgrestEncoder, decoder: postgrestDecoder),
+            auth: .init(emitLocalSessionAsInitialSession: true)
+        )
     )
 
     /// Models map 1:1 to their table's columns (minus `user_id`, which is

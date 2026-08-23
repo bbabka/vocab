@@ -31,4 +31,32 @@ enum Reconciler {
         }
         return merged
     }
+
+    /// Merges one incoming realtime row into an existing array — the
+    /// single-row counterpart to `merge`, which assumes `remote` is the
+    /// complete state and so isn't reusable as-is here (handing it a
+    /// one-element `remote` array would drop every other item not present
+    /// in that one row). Pending rows are left untouched (the outbox hasn't
+    /// synced them yet, so `remote` can't be authoritative), new rows are
+    /// appended, and existing ones are replaced by last-write-wins on
+    /// `updatedAt`. Returns `nil` when the incoming row shouldn't change
+    /// local state at all (pending, or a stale/out-of-order row older than
+    /// what's already there).
+    static func upsertOne<T, Key: Hashable>(
+        _ remote: T,
+        into items: [T],
+        key: (T) -> Key,
+        pendingKeys: Set<Key>,
+        updatedAt: (T) -> Date
+    ) -> [T]? {
+        let remoteKey = key(remote)
+        guard !pendingKeys.contains(remoteKey) else { return nil }
+        guard let index = items.firstIndex(where: { key($0) == remoteKey }) else {
+            return items + [remote]
+        }
+        guard updatedAt(remote) >= updatedAt(items[index]) else { return nil }
+        var updated = items
+        updated[index] = remote
+        return updated
+    }
 }

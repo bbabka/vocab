@@ -25,7 +25,7 @@ final class SessionAssemblerTests: XCTestCase {
     }
 
     private func isFullyRetired(_ cards: [(word: Word, progress: WordProgress)]) -> Bool {
-        ReviewScheduler.isFullyRetired(cards.map(\.progress), direction: .recognize, now: now)
+        ReviewScheduler.isFullyRetired(cards.map(\.progress), words: cards.map(\.word), direction: .recognize, now: now)
     }
 
     func testDueResurfaceWordsOrderedByDueAtAscending() {

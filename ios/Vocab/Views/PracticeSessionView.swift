@@ -22,6 +22,14 @@ struct PracticeSessionView: View {
     @State private var dragOffset: CGSize = .zero
     @State private var tally = SessionTally()
     @State private var isFinished = false
+    /// True from the moment a swipe/skip is committed until `finishCommit`
+    /// advances past it. Guards against the same card being committed
+    /// twice: the drag gesture, tap-to-flip, and skip button all stay live
+    /// during the 0.3s fly-off animation, so a fast double-swipe or
+    /// double-tap-skip could otherwise fire `finishCommit` twice for one
+    /// card — the second call would hand `WordStore.applySwipe` a card
+    /// whose progress this session already advanced.
+    @State private var isCommitting = false
 
     /// True only once `assembleBatch` has actually run and come back empty —
     /// distinct from `isFinished`, which means a session was swiped through
@@ -151,6 +159,10 @@ struct PracticeSessionView: View {
                     .rotationEffect(.degrees(Double(dragOffset.width / 20)))
                     .gesture(dragGesture(for: card))
                     .onTapGesture { isFlipped.toggle() }
+                    // Mid fly-off, this card is already committed and on
+                    // its way out — no drag/tap should touch it or the
+                    // (unrelated) next card underneath.
+                    .allowsHitTesting(!isCommitting)
             }
 
             Spacer()
@@ -187,6 +199,7 @@ struct PracticeSessionView: View {
         }
         .buttonStyle(.plain)
         .padding(20)
+        .disabled(isCommitting)
     }
 
     private func dragGesture(for card: PracticeCard) -> some Gesture {
@@ -239,6 +252,8 @@ struct PracticeSessionView: View {
     /// the departing card visually clashed. Separating "animate out" from
     /// "swap content, then snap in" fixes that.
     private func flingOffScreen(_ swipe: ReviewResult, for card: PracticeCard) {
+        guard !isCommitting else { return }
+        isCommitting = true
         withAnimation(.easeOut(duration: 0.3)) {
             dragOffset = flyOffTarget(for: swipe)
         } completion: {
@@ -261,6 +276,7 @@ struct PracticeSessionView: View {
             dragOffset = .zero
             isFlipped = false
             currentIndex += 1
+            isCommitting = false
         }
 
         if currentIndex >= batch.count {

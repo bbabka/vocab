@@ -55,6 +55,10 @@ struct RootView: View {
                 collectionStore.reset()
                 wordStore.reset()
                 reviewStore.reset()
+                // Device-wide UserDefaults, not scoped by account — without
+                // this, a second account signing in on this device would
+                // inherit the first account's Practice collection selection.
+                UserDefaults.standard.removeObject(forKey: PracticeSetupView.selectedCollectionIdsKey)
                 hasLoadedInitialData = false
                 Task { await realtimeService.stop() }
             }

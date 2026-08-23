@@ -14,9 +14,16 @@ struct StatsView: View {
     private var counts: WordCounts {
         let words = wordStore.words
         let statusByWordId = wordStore.recognizeStatusByWordId
-        let learntCount = words.filter { statusByWordId[$0.id] == .learnt || statusByWordId[$0.id] == .retired }.count
-        let learningCount = words.filter { statusByWordId[$0.id] == .learning }.count
-        let newCount = words.filter { statusByWordId[$0.id] == .new }.count
+        // `?? .new`, matching `WordListView`'s lookup: `words` and
+        // `wordProgress` load via independent fetches (see
+        // `WordStore.loadFromRemote`), so a word can briefly have no
+        // matching progress row yet. Without the fallback it fell into none
+        // of the three buckets below, so `total` didn't match its own
+        // breakdown.
+        let statuses = words.map { statusByWordId[$0.id] ?? .new }
+        let learntCount = statuses.filter { $0 == .learnt || $0 == .retired }.count
+        let learningCount = statuses.filter { $0 == .learning }.count
+        let newCount = statuses.filter { $0 == .new }.count
         return WordCounts(total: words.count, learnt: learntCount, learning: learningCount, new: newCount)
     }
 

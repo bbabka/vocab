@@ -232,7 +232,7 @@ final class ReviewSchedulerTests: XCTestCase {
         let recognizeDone = makeProgress(wordId: word.id, direction: .recognize, status: .retired)
         let recallActive = makeProgress(wordId: word.id, direction: .recall, status: .new)
 
-        XCTAssertTrue(ReviewScheduler.isFullyRetired([recognizeDone, recallActive], direction: .recognize, now: now))
-        XCTAssertFalse(ReviewScheduler.isFullyRetired([recognizeDone, recallActive], direction: .recall, now: now))
+        XCTAssertTrue(ReviewScheduler.isFullyRetired([recognizeDone, recallActive], words: [word], direction: .recognize, now: now))
+        XCTAssertFalse(ReviewScheduler.isFullyRetired([recognizeDone, recallActive], words: [word], direction: .recall, now: now))
     }
 }

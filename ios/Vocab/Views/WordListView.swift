@@ -1,19 +1,28 @@
 import SwiftUI
 
+private extension String {
+    var capitalizedFirstLetter: String {
+        guard let first else { return self }
+        return String(first).uppercased() + dropFirst()
+    }
+}
+
 private enum StatusFilter: String, CaseIterable, Identifiable {
-    case all = "All"
+    case active = "Active"
     case new = "New"
     case learning = "Learning"
     case learnt = "Learnt"
+    case all = "All"
 
     var id: String { rawValue }
 
-    var status: WordStatus? {
+    var statuses: Set<WordStatus>? {
         switch self {
         case .all: return nil
-        case .new: return .new
-        case .learning: return .learning
-        case .learnt: return .learnt
+        case .active: return [.new, .learning]
+        case .new: return [.new]
+        case .learning: return [.learning]
+        case .learnt: return [.learnt]
         }
     }
 }
@@ -22,15 +31,19 @@ struct WordListView: View {
     let collectionId: UUID
 
     @EnvironmentObject private var wordStore: WordStore
-    @State private var filter: StatusFilter = .all
+    @State private var filter: StatusFilter = .active
     @State private var searchText = ""
     @State private var isPresentingAddWord = false
 
-    private var filteredWords: [Word] {
+    /// Takes the status lookup as a parameter rather than reading
+    /// `wordStore.recognizeStatusByWordId` itself — that's an O(n) rebuild
+    /// over every progress row in the account, and `body` already needs the
+    /// same dictionary for `WordRow`'s status badge, so it's computed once
+    /// there and passed down instead of twice per render.
+    private func filteredWords(statusByWordId: [UUID: WordStatus]) -> [Word] {
         var result = wordStore.words(in: collectionId)
-        if let status = filter.status {
-            let recognizeStatusByWordId = wordStore.recognizeStatusByWordId
-            result = result.filter { recognizeStatusByWordId[$0.id] == status }
+        if let statuses = filter.statuses {
+            result = result.filter { statuses.contains(statusByWordId[$0.id] ?? .new) }
         }
         if !searchText.isEmpty {
             result = result.filter {
@@ -43,6 +56,7 @@ struct WordListView: View {
 
     var body: some View {
         let recognizeStatusByWordId = wordStore.recognizeStatusByWordId
+        let filteredWords = filteredWords(statusByWordId: recognizeStatusByWordId)
         List {
             Picker("Filter", selection: $filter) {
                 ForEach(StatusFilter.allCases) { option in
@@ -87,18 +101,23 @@ private struct WordRow: View {
     let word: Word
     let status: WordStatus
 
-    private var meaningsSummary: String {
-        word.meanings
-            .map { $0.partOfSpeech.abbreviation.isEmpty ? $0.translation : "\($0.partOfSpeech.abbreviation) \($0.translation)" }
-            .joined(separator: " · ")
+    private var meaningsSummary: Text {
+        let entries = word.meanings.map { meaning -> Text in
+            let translation = Text(meaning.translation.capitalizedFirstLetter)
+            guard !meaning.partOfSpeech.abbreviation.isEmpty else { return translation }
+            return Text(meaning.partOfSpeech.abbreviation).italic() + Text(" ") + translation
+        }
+        return entries.dropFirst().reduce(entries[0]) { partial, next in
+            partial + Text(" · ") + next
+        }
     }
 
     var body: some View {
         HStack {
             VStack(alignment: .leading) {
-                Text(word.term).font(.body)
+                Text(word.term.capitalizedFirstLetter).font(.body)
                 if !word.meanings.isEmpty {
-                    Text(meaningsSummary).font(.subheadline).foregroundStyle(.secondary)
+                    meaningsSummary.font(.subheadline).foregroundStyle(.secondary)
                 }
             }
             Spacer()

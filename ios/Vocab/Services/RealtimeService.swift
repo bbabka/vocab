@@ -57,7 +57,12 @@ final class RealtimeService: ObservableObject {
             }
         }
 
-        Task { await channel.subscribe() }
+        // `subscribeWithError()`, not the deprecated `subscribe()` — same
+        // fire-and-forget shape (a failed subscribe just means Realtime
+        // updates don't arrive; every store's data still lands via the
+        // regular `loadFromRemote()` fetches), so the error is swallowed
+        // here rather than surfaced, matching `subscribe()`'s old behavior.
+        Task { try? await channel.subscribeWithError() }
     }
 
     /// Cancels the row-listening tasks and tears down the channel entirely
