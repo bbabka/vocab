@@ -8,14 +8,21 @@ import Foundation
 /// importing Tatoeba's downloadable sentence-pair dumps into our own table,
 /// not calling this endpoint live.
 enum TatoebaService {
-    /// `Language.common`'s ISO 639-1 codes mapped to the ISO 639-3 codes
-    /// Tatoeba's endpoint expects (e.g. `"de"` -> `"deu"`).
-    static let iso639_3: [String: String] = [
-        "en": "eng", "es": "spa", "fr": "fra", "de": "deu", "it": "ita",
-        "pt": "por", "nl": "nld", "sv": "swe", "pl": "pol", "ru": "rus",
-        "tr": "tur", "ar": "ara", "hi": "hin", "ja": "jpn", "ko": "kor",
-        "zh": "cmn", "vi": "vie", "cs": "ces",
-    ]
+    /// Tatoeba's endpoint expects ISO 639-3 codes; `Locale.LanguageCode`
+    /// derives the ISO 639-2/T equivalent for any ISO 639-1 code Foundation
+    /// knows (iOS 16+), which coincides with ISO 639-3 for the vast
+    /// majority of languages. This replaces a hand-maintained ~18-language
+    /// map that silently dropped every language outside it (Danish
+    /// included) — the same trap `Language.swift`'s pick-list was pulled
+    /// out of; see its own doc comment. Chinese is the one language Tatoeba
+    /// needs an override for: it expects `"cmn"` (Mandarin), not `"zho"`,
+    /// the macrolanguage code Foundation derives for `"zh"`.
+    static let iso639_3Overrides: [String: String] = ["zh": "cmn"]
+
+    static func iso639_3(for languageCode: String) -> String? {
+        if let override = iso639_3Overrides[languageCode] { return override }
+        return Locale.LanguageCode(languageCode).identifier(.alpha3)
+    }
 
     private static let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -28,7 +35,7 @@ enum TatoebaService {
     /// any failure — never throws, so the caller can treat "no example
     /// found" and "the request failed" identically.
     static func fetchExample(term: String, languageCode: String, nativeLanguageCode: String) async -> String? {
-        guard let from = iso639_3[languageCode] else { return nil }
+        guard let from = iso639_3(for: languageCode) else { return nil }
         guard var components = URLComponents(string: "https://tatoeba.org/eng/api_v0/search") else { return nil }
 
         var queryItems = [
@@ -37,7 +44,7 @@ enum TatoebaService {
             URLQueryItem(name: "orphans", value: "no"),
             URLQueryItem(name: "unapproved", value: "no"),
         ]
-        if let to = iso639_3[nativeLanguageCode] {
+        if let to = iso639_3(for: nativeLanguageCode) {
             queryItems.append(URLQueryItem(name: "to", value: to))
         }
         components.queryItems = queryItems
