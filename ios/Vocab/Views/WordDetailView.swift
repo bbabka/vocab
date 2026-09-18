@@ -207,6 +207,12 @@ struct WordDetailView: View {
                 } label: {
                     Label("Add meaning", systemImage: "plus")
                 }
+                if let draft, let collection, #available(iOS 26.0, *) {
+                    DefinitionFetchButton(term: draft.term, languageCode: collection.targetLanguage) { definition in
+                        self.draft?.meanings.append(WordMeaning(translation: definition))
+                        wordStore.update(self.draft!)
+                    }
+                }
             }
 
             Section("Example") {

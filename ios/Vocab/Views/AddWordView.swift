@@ -58,6 +58,15 @@ struct AddWordView: View {
                     } label: {
                         Label("Add meaning", systemImage: "plus")
                     }
+                    if let collection, #available(iOS 26.0, *) {
+                        // Same-language dictionary lookup (e.g. an English
+                        // word's English definition), distinct from the
+                        // translate-on-type row above — appended as its own
+                        // meaning rather than replacing it.
+                        DefinitionFetchButton(term: term, languageCode: collection.targetLanguage) { definition in
+                            meanings.append(WordMeaning(translation: definition))
+                        }
+                    }
                     if case .unsupported(let source, let target) = translationState {
                         Text("Auto-translate isn't available for \(source) → \(target) — enter manually.")
                             .font(.caption)
@@ -123,10 +132,22 @@ struct AddWordView: View {
             guard !Task.isCancelled else { return }
 
             if configuration == nil {
-                configuration = TranslationSession.Configuration(
-                    source: collection.map { Locale.Language(identifier: $0.targetLanguage) },
-                    target: collection.map { Locale.Language(identifier: $0.nativeLanguage) }
-                )
+                let source = collection.map { Locale.Language(identifier: $0.targetLanguage) }
+                let target = collection.map { Locale.Language(identifier: $0.nativeLanguage) }
+                // .highFidelity (iOS 26.4+) routes through Apple Intelligence
+                // for more fluent single-word/short-phrase translations than
+                // the older on-device model used by default; falls back to
+                // the plain initializer — and the system default strategy —
+                // below our 18.0 deployment target.
+                if #available(iOS 26.4, *) {
+                    configuration = TranslationSession.Configuration(
+                        source: source,
+                        target: target,
+                        preferredStrategy: .highFidelity
+                    )
+                } else {
+                    configuration = TranslationSession.Configuration(source: source, target: target)
+                }
             } else {
                 configuration?.invalidate()
             }

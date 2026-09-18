@@ -5,8 +5,9 @@ import Translation
 /// visually distinct per the brief: a spinner while translating, a silent
 /// blank/manual field on a transient failure, and a permanent inline message
 /// for a genuinely unsupported language pair. Without this distinction, an
-/// unsupported pair (e.g. da→en, unavailable until iOS 27) would look
-/// identical to "still loading" — a spinner that never resolves.
+/// unsupported pair (e.g. a language iOS's Translate app hasn't picked up
+/// yet — da→en only became supported in iOS 27) would look identical to
+/// "still loading" — a spinner that never resolves.
 enum TranslationFieldState: Equatable {
     case checking
     case translating
