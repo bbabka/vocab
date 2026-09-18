@@ -45,6 +45,11 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: true
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
         INFOPLIST_KEY_UISupportedInterfaceOrientations~ipad: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        # iPad doesn't declare all four orientations (no upside-down
+        # portrait), which Split View/Slide Over multitasking requires —
+        # opting out of multitasking via full screen resolves Xcode's
+        # "All interface orientations must be supported" warning instead.
+        INFOPLIST_KEY_UIRequiresFullScreen: true
     dependencies:
       - package: Supabase
       - package: GRDB
