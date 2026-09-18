@@ -97,11 +97,6 @@ struct RootView: View {
                 StatsView()
             }
             .tabItem { Label("Stats", systemImage: "chart.bar") }
-
-            NavigationStack {
-                SettingsView()
-            }
-            .tabItem { Label("Settings", systemImage: "gearshape") }
         }
         .task {
             connectivityMonitor.start {

@@ -4,6 +4,7 @@ struct CollectionsListView: View {
     @EnvironmentObject private var collectionStore: CollectionStore
     @EnvironmentObject private var wordStore: WordStore
     @State private var isPresentingNewCollection = false
+    @State private var isPresentingSettings = false
     @State private var renamingCollection: WordCollection?
     @State private var renameText = ""
 
@@ -50,6 +51,13 @@ struct CollectionsListView: View {
             WordListView(collectionId: route.id)
         }
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    isPresentingSettings = true
+                } label: {
+                    Image(systemName: "gearshape")
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     isPresentingNewCollection = true
@@ -60,6 +68,16 @@ struct CollectionsListView: View {
         }
         .sheet(isPresented: $isPresentingNewCollection) {
             AddCollectionView()
+        }
+        .sheet(isPresented: $isPresentingSettings) {
+            NavigationStack {
+                SettingsView()
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { isPresentingSettings = false }
+                        }
+                    }
+            }
         }
         .alert("Rename Collection", isPresented: Binding(
             get: { renamingCollection != nil },
