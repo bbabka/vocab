@@ -101,6 +101,12 @@ struct WordDetailView: View {
                 }
             }
 
+            if let definition = word.definition, !definition.isEmpty {
+                Divider()
+                Text(definition)
+                    .font(.body)
+            }
+
             if let example = word.exampleSentence, !example.isEmpty {
                 Divider()
                 Text(example)
@@ -211,9 +217,17 @@ struct WordDetailView: View {
                 } label: {
                     Label("Add meaning", systemImage: "plus")
                 }
+            }
+
+            Section("Definition") {
+                TextField("Definition", text: optionalText(wordBinding.definition), axis: .vertical)
                 if let draft, let collection, #available(iOS 26.0, *) {
+                    // Same-language dictionary lookup (e.g. an English
+                    // word's English definition) — distinct from Meanings
+                    // above, which are translations into the collection's
+                    // native language.
                     DefinitionFetchButton(term: draft.term, languageCode: collection.targetLanguage) { definition in
-                        self.draft?.meanings.append(WordMeaning(translation: definition))
+                        self.draft?.definition = definition
                         wordStore.update(self.draft!)
                     }
                 }

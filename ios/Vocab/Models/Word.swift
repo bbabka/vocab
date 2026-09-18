@@ -79,6 +79,12 @@ struct Word: Identifiable, Codable, Equatable, Sendable {
     var term: String
     var meanings: [WordMeaning]
     var pronunciation: String?
+    /// A same-language explanation of `term` (e.g. an English word's
+    /// English definition) — distinct from `meanings`, which are
+    /// translations into the collection's native language. Kept as its own
+    /// field rather than folded into `meanings`, mirroring how
+    /// `exampleSentence` gets its own field rather than living inside them.
+    var definition: String?
     var exampleSentence: String?
     var importance: Int
     /// Set once, permanently, the first time this word's `recognize`
@@ -95,6 +101,7 @@ struct Word: Identifiable, Codable, Equatable, Sendable {
         term: String,
         meanings: [WordMeaning] = [],
         pronunciation: String? = nil,
+        definition: String? = nil,
         exampleSentence: String? = nil,
         importance: Int = 2,
         recallUnlockedAt: Date? = nil,
@@ -106,6 +113,7 @@ struct Word: Identifiable, Codable, Equatable, Sendable {
         self.term = term
         self.meanings = meanings
         self.pronunciation = pronunciation
+        self.definition = definition
         self.exampleSentence = exampleSentence
         self.importance = importance
         self.recallUnlockedAt = recallUnlockedAt
@@ -122,6 +130,7 @@ struct Word: Identifiable, Codable, Equatable, Sendable {
         translation: String,
         partOfSpeech: PartOfSpeech = .other,
         pronunciation: String? = nil,
+        definition: String? = nil,
         exampleSentence: String? = nil,
         importance: Int = 2,
         recallUnlockedAt: Date? = nil,
@@ -134,6 +143,7 @@ struct Word: Identifiable, Codable, Equatable, Sendable {
             term: term,
             meanings: translation.isEmpty ? [] : [WordMeaning(translation: translation, partOfSpeech: partOfSpeech)],
             pronunciation: pronunciation,
+            definition: definition,
             exampleSentence: exampleSentence,
             importance: importance,
             recallUnlockedAt: recallUnlockedAt,

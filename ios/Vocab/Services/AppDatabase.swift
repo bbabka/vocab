@@ -178,6 +178,29 @@ final class AppDatabase: Sendable {
             }
         }
 
+        // `definition` (a same-language explanation of `term`, distinct
+        // from `meanings`'s translations) is a plain added column, so a
+        // simple `ALTER TABLE` would do — but `local_words` is a disposable
+        // read mirror, and every prior schema change to it already used
+        // drop-and-recreate (see v2/v3's notes), so this keeps that
+        // convention rather than mixing strategies.
+        migrator.registerMigration("v4_word_definition") { db in
+            try db.drop(table: "local_words")
+            try db.create(table: "local_words") { t in
+                t.column("id", .blob).primaryKey()
+                t.column("collectionId", .blob).notNull().indexed()
+                t.column("term", .text).notNull()
+                t.column("meanings", .text).notNull()
+                t.column("pronunciation", .text)
+                t.column("definition", .text)
+                t.column("exampleSentence", .text)
+                t.column("importance", .integer).notNull()
+                t.column("recallUnlockedAt", .datetime)
+                t.column("createdAt", .datetime).notNull()
+                t.column("updatedAt", .datetime).notNull()
+            }
+        }
+
         return migrator
     }()
 }

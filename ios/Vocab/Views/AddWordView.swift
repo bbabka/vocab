@@ -14,6 +14,7 @@ struct AddWordView: View {
 
     @State private var term = ""
     @State private var meanings: [WordMeaning] = [WordMeaning(translation: "")]
+    @State private var definition = ""
     @State private var exampleSentence = ""
     @State private var importance = 2
 
@@ -62,19 +63,23 @@ struct AddWordView: View {
                     } label: {
                         Label("Add meaning", systemImage: "plus")
                     }
-                    if let collection, #available(iOS 26.0, *) {
-                        // Same-language dictionary lookup (e.g. an English
-                        // word's English definition), distinct from the
-                        // translate-on-type row above — appended as its own
-                        // meaning rather than replacing it.
-                        DefinitionFetchButton(term: term, languageCode: collection.targetLanguage) { definition in
-                            meanings.append(WordMeaning(translation: definition))
-                        }
-                    }
                     if case .unsupported(let source, let target) = translationState {
                         Text("Auto-translate isn't available for \(source) → \(target) — enter manually.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("Definition") {
+                    TextField("Definition", text: $definition, axis: .vertical)
+                    if let collection, #available(iOS 26.0, *) {
+                        // Same-language dictionary lookup (e.g. an English
+                        // word's English definition) — distinct from
+                        // Meanings above, which are translations into the
+                        // collection's native language.
+                        DefinitionFetchButton(term: term, languageCode: collection.targetLanguage) { fetched in
+                            definition = fetched
+                        }
                     }
                 }
 
@@ -107,6 +112,7 @@ struct AddWordView: View {
                                 collectionId: collectionId,
                                 term: term,
                                 meanings: meanings.filter { !$0.translation.isEmpty },
+                                definition: definition.isEmpty ? nil : definition,
                                 exampleSentence: exampleSentence.isEmpty ? nil : exampleSentence,
                                 importance: importance
                             )

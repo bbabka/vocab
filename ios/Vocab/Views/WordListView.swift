@@ -49,6 +49,7 @@ struct WordListView: View {
             result = result.filter {
                 $0.term.localizedCaseInsensitiveContains(searchText)
                     || $0.meanings.contains { $0.translation.localizedCaseInsensitiveContains(searchText) }
+                    || ($0.definition?.localizedCaseInsensitiveContains(searchText) ?? false)
             }
         }
         return result
