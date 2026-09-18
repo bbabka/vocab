@@ -53,16 +53,45 @@ enum DefinitionService {
             You are a concise monolingual dictionary for \(languageName). Given a \
             word or short phrase in \(languageName), reply with exactly one short, \
             plain-language definition written in \(languageName) itself. Never \
-            translate it into another language. No examples, no extra commentary,
-            no restating the term.
+            translate it into another language. No examples, no extra commentary.
+
+            Start directly with the explanation itself — never restate the term as \
+            the sentence's subject. For example, if asked to define "cat", reply \
+            with something like "a small domesticated carnivorous mammal", not \
+            "Cat is a small domesticated carnivorous mammal" or "A cat is...".
             """
         )
         do {
             let response = try await session.respond(to: term)
             let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
-            return text.isEmpty ? nil : text
+            guard !text.isEmpty else { return nil }
+            return stripRestatedTerm(from: text, term: term)
         } catch {
             return nil
         }
+    }
+
+    /// Defense-in-depth alongside the prompt above: Apple's smaller
+    /// on-device model doesn't reliably follow "don't restate the term"
+    /// instructions, so this catches the common "<Term> is/means/refers to
+    /// ..." patterns it still produces and drops that lead-in, leaving just
+    /// the definition — same shape as a hand-typed meaning.
+    private static func stripRestatedTerm(from text: String, term: String) -> String {
+        // .caseInsensitive on the range search already covers "Is"/"is" and
+        // a capitalized term, so each connector only needs one casing here.
+        let connectors = ["is", "are", "means", "refers to", "denotes", "describes"]
+        for connector in connectors {
+            for prefix in ["\(term) \(connector) ", "a \(term) \(connector) "] {
+                guard let range = text.range(of: prefix, options: [.caseInsensitive, .anchored]) else { continue }
+                let remainder = text[range.upperBound...]
+                guard let first = remainder.first else { continue }
+                return (String(first).uppercased() + remainder.dropFirst())
+                    .trimmingCharacters(in: .whitespaces)
+            }
+        }
+        if let range = text.range(of: "\(term): ", options: [.caseInsensitive, .anchored]) {
+            return text[range.upperBound...].trimmingCharacters(in: .whitespaces)
+        }
+        return text
     }
 }
