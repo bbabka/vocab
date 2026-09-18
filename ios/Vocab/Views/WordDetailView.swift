@@ -191,7 +191,7 @@ struct WordDetailView: View {
 
             Section("Meanings") {
                 ForEach(wordBinding.meanings, editActions: .delete) { $meaning in
-                    HStack {
+                    HStack(alignment: .top) {
                         Picker("Part of speech", selection: $meaning.partOfSpeech) {
                             ForEach(PartOfSpeech.allCases, id: \.self) { pos in
                                 Text(pos.abbreviation.isEmpty ? "—" : pos.abbreviation).tag(pos)
@@ -199,7 +199,11 @@ struct WordDetailView: View {
                         }
                         .labelsHidden()
                         .frame(width: 80)
-                        TextField("Meaning", text: $meaning.translation)
+                        // .vertical lets long entries (e.g. a fetched
+                        // definition's full sentence, not just a short
+                        // translated word) wrap instead of scrolling
+                        // horizontally off the row.
+                        TextField("Meaning", text: $meaning.translation, axis: .vertical)
                     }
                 }
                 Button {
