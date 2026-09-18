@@ -81,7 +81,15 @@ struct WordDetailView: View {
                     }
                 }
                 Spacer()
-                StatusBadge(status: recognizeProgress?.status ?? .new)
+                Menu {
+                    Picker("Status", selection: statusBinding) {
+                        ForEach(WordStatus.allCases, id: \.self) { status in
+                            Text(status.rawValue.capitalized).tag(status)
+                        }
+                    }
+                } label: {
+                    StatusBadge(status: recognizeProgress?.status ?? .new)
+                }
             }
 
             if !word.meanings.isEmpty {
@@ -115,13 +123,29 @@ struct WordDetailView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Button {
-                SpeechService.shared.speak(word.term, languageCode: collection?.targetLanguage ?? "en")
-            } label: {
-                Label("Speak", systemImage: "speaker.wave.2.fill")
-                    .font(.subheadline.weight(.semibold))
+            HStack {
+                Button {
+                    SpeechService.shared.speak(word.term, languageCode: collection?.targetLanguage ?? "en")
+                } label: {
+                    Label("Speak", systemImage: "speaker.wave.2.fill")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .buttonStyle(.borderedProminent)
+
+                Spacer()
+
+                Menu {
+                    Picker("Importance", selection: wordBinding.importance) {
+                        ForEach(1...3, id: \.self) { level in
+                            Text(String(repeating: "★", count: level)).tag(level)
+                        }
+                    }
+                } label: {
+                    Text(String(repeating: "★", count: word.importance) + String(repeating: "☆", count: 3 - word.importance))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             }
-            .buttonStyle(.borderedProminent)
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -134,10 +158,6 @@ struct WordDetailView: View {
                 .font(.headline)
                 .padding(.bottom, 8)
 
-            statRow("Status", value: (recognizeProgress?.status ?? .new).rawValue.capitalized)
-            Divider()
-            statRow("Importance", value: String(repeating: "★", count: word.importance))
-            Divider()
             statRow("Times seen", value: "\(recognizeProgress?.timesSeen ?? 0)")
             Divider()
             statRow("Know count", value: "\(recognizeProgress?.knowCount ?? 0)")
@@ -246,24 +266,15 @@ struct WordDetailView: View {
                     }
                 }
             }
-
-            Section("Practice") {
-                Stepper("Importance: \(wordBinding.wrappedValue.importance)", value: wordBinding.importance, in: 1...3)
-                // Bound to `wordStore.setStatus`, not `wordBinding` like the
-                // fields above: status lives on `WordProgress` now, and a
-                // manual override needs to reset knowCount/intervalStep/dueAt
-                // to sensible defaults for the chosen status (see
-                // `setStatus`'s doc comment) — a plain field edit through the
-                // generic draft/persist-on-disappear path can't do that.
-                Picker("Status", selection: statusBinding) {
-                    ForEach(WordStatus.allCases, id: \.self) { status in
-                        Text(status.rawValue.capitalized).tag(status)
-                    }
-                }
-            }
         }
     }
 
+    /// Bound to `wordStore.setStatus`, not `wordBinding` like the other
+    /// fields: status lives on `WordProgress` now, and a manual override
+    /// needs to reset knowCount/intervalStep/dueAt to sensible defaults for
+    /// the chosen status (see `setStatus`'s doc comment) — a plain field
+    /// edit through the generic draft/persist-on-disappear path can't do
+    /// that.
     private var statusBinding: Binding<WordStatus> {
         Binding(
             get: { recognizeProgress?.status ?? .new },
